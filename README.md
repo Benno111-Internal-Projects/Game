@@ -147,3 +147,38 @@ from `framework/shaders/es/`.
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
+
+## Title screen and prefabs
+
+The demo opens on a title screen with a live scene preview. Click **Start** or
+press **Enter** to enter the demo. **Esc** leaves first-person mode, returns
+from orbit to the title screen, and quits from the title screen. **M** or the
+title screen's audio button toggles music and effects.
+
+`framework/prefab.h` defines `ScenePrefab`, a reusable template with local
+bounds, draw data, and optional LOD distances. Create a `PrefabInstance`
+with a position, positive uniform scale, and enabled flag. Use
+`MakePrefabSceneObject` to submit it to the scene. Rebuild that scene entry
+after changing the instance so its world bounds and visibility stay in sync.
+The caller owns the template, instance, and draw resources. The title preview
+and game share a crate prefab, and the game updates a ball instance as physics
+moves it.
+
+## Desktop installers
+
+The GitHub Actions run also uploads two installer artifacts. Both install for
+the current user and include the game, assets, shaders, and the GPLv3 license.
+
+| Platform | Installer | Removal |
+| --- | --- | --- |
+| Windows | Run `benno111-engene-windows-setup.exe`. Setup installs to `%LOCALAPPDATA%\benno111-engene` and offers Start menu and desktop shortcuts. | Use **Settings → Apps → Installed apps** or run `uninstall.exe` from the install folder. |
+| Linux | Extract the installer tarball and run `./benno111-engene-linux-setup.run`. Setup installs under `${XDG_DATA_HOME:-$HOME/.local/share}/benno111-engene` and creates an applications-menu entry. | Run `uninstall` in the install folder, or run setup again with `--uninstall`. |
+
+Linux setup prompts in the terminal. It can also use Zenity when launched from
+a graphical desktop. Pass `--yes` for unattended installation or removal.
+Windows setup and its uninstaller accept `/S` for silent mode.
+
+Build a Linux installer with
+`bash installers/build-linux.sh build benno111-engene-linux-setup.run`.
+The Windows workflow compiles `installers/windows.nsi` with NSIS using the
+desktop build directory, repository directory, and output filename.

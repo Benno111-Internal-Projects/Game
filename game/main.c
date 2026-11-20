@@ -9,7 +9,9 @@
 #include "input.h"
 #include "game_logic.h"
 #include "physics.h"
+#include "prefab.h"
 #include "ui.h"
+#include "title_screen.h"
 #include "window.h"
 #include "scene.h"
 #include "scene_music.h"
@@ -26,7 +28,7 @@
 enum GameAction {
     ACTION_SHADER, ACTION_SKY, ACTION_GRID, ACTION_EXIT, ACTION_WALK,
     ACTION_RESET, ACTION_RIGHT, ACTION_LEFT, ACTION_FORWARD, ACTION_BACK,
-    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_FULLSCREEN, ACTION_COUNT
+    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_FULLSCREEN, ACTION_START, ACTION_COUNT
 };
 
 static const int gameKeys[ACTION_COUNT] = {
@@ -34,34 +36,28 @@ static const int gameKeys[ACTION_COUNT] = {
     [ACTION_EXIT] = KEY_ESCAPE, [ACTION_WALK] = KEY_F, [ACTION_RESET] = KEY_R,
     [ACTION_RIGHT] = KEY_D, [ACTION_LEFT] = KEY_A, [ACTION_FORWARD] = KEY_W,
     [ACTION_BACK] = KEY_S, [ACTION_DROP] = KEY_P, [ACTION_OCCLUSION] = KEY_C,
-    [ACTION_MUTE] = KEY_M, [ACTION_FULLSCREEN] = KEY_F11,
+    [ACTION_MUTE] = KEY_M, [ACTION_FULLSCREEN] = KEY_F11, [ACTION_START] = KEY_ENTER,
 };
 
-typedef struct ModelDrawData {
-    const Model *model;
-    float scale;
-} ModelDrawData;
-
 typedef struct BallDrawData {
-    const PhysicsSphere *ball;
     const DynamicVertexBuffer *marker;
     Material markerMaterial;
 } BallDrawData;
 
-static void DrawSceneModel(const void *context, size_t lod)
+static void DrawSceneModel(const void *context, Vector3 position, float scale, size_t lod)
 {
-    const ModelDrawData *data = context;
+    const Model *model = context;
     (void)lod;
-    DrawModel(*data->model, Vector3Zero(), data->scale, WHITE);
+    DrawModel(*model, position, scale, WHITE);
 }
 
-static void DrawSceneBall(const void *context, size_t lod)
+static void DrawSceneBall(const void *context, Vector3 position, float radius, size_t lod)
 {
     const BallDrawData *data = context;
     static const int rings[] = { 12, 8, 4 };
     static const int slices[] = { 16, 10, 6 };
     DrawDynamicTriangles(data->marker, data->markerMaterial, MatrixIdentity());
-    DrawSphereEx(data->ball->position, data->ball->radius, rings[lod], slices[lod], ORANGE);
+    DrawSphereEx(position, radius, rings[lod], slices[lod], ORANGE);
 }
 
 static void UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, float floorHeight)
@@ -102,8 +98,12 @@ typedef struct StarterGame {
     bool custom, showSky, grid, walking, pointerCaptured, occlusionEnabled;
     WalkCamera walk;
     PhysicsSphere ball;
-    ModelDrawData modelDraw;
     BallDrawData ballDraw;
+    ScenePrefab modelPrefab, ballPrefab;
+    PrefabInstance modelInstance, ballInstance, titleModel;
+    bool titleOpen;
+    float titleTime;
+    Vector2 titlePointer;
     SceneObject scene[2];
     Rectangle dropBounds;
     UiButtonState drop;
@@ -155,6 +155,9 @@ static bool InitStarter(void *state)
     Vector3 light = { 0.5f, 1.0f, 0.6f };
     SetShaderValue(game->shaded, GetShaderLocation(game->shaded, "lightDirection"), &light, SHADER_UNIFORM_VEC3);
 
+    for (int i = 0; i < game->model.materialCount; ++i)
+        game->model.materials[i].shader = game->shaded;
+
     game->sky = LoadSkybox(game->skyPath, game->skyShader);
     if (!IsModelValid(game->sky)) return false;
 
@@ -177,20 +180,27 @@ static bool InitStarter(void *state)
     game->occlusionEnabled = true;
     game->markerMaterial = LoadMaterialDefault();
     game->markerMaterial.maps[MATERIAL_MAP_ALBEDO].color = (Color){ 86, 57, 24, 255 };
-    game->modelDraw = (ModelDrawData){ &game->model, scale };
-    game->ballDraw = (BallDrawData){ &game->ball, &game->ballMarker, game->markerMaterial };
+    game->ballDraw = (BallDrawData){ &game->ballMarker, game->markerMaterial };
     static const float ballLodDistances[] = { 7.5f, 11.0f };
-    game->scene[0] = (SceneObject){
-        .bounds = { Vector3Scale(Vector3Subtract(bounds.min, center), scale),
-                    Vector3Scale(Vector3Subtract(bounds.max, center), scale) },
-        .draw = DrawSceneModel, .data = &game->modelDraw,
-        .enabled = true, .opaqueBox = !game->modelPath && !game->texturePath,
+    game->modelPrefab = (ScenePrefab){
+        .localBounds = { Vector3Subtract(bounds.min, center), Vector3Subtract(bounds.max, center) },
+        .draw = DrawSceneModel, .data = &game->model,
+        .opaqueBox = !game->modelPath && !game->texturePath,
     };
-    game->scene[1] = (SceneObject){
+    game->ballPrefab = (ScenePrefab){
+        .localBounds = { { -1, -1, -1 }, { 1, 1, 1 } },
         .lodDistances = ballLodDistances,
         .lodDistanceCount = sizeof(ballLodDistances) / sizeof(ballLodDistances[0]),
         .draw = DrawSceneBall, .data = &game->ballDraw,
     };
+    game->modelInstance = (PrefabInstance){
+        .prefab = &game->modelPrefab, .scale = scale, .enabled = true,
+    };
+    game->titleModel = game->modelInstance;
+    game->titleModel.scale *= 1.16f;
+    game->scene[0] = MakePrefabSceneObject(&game->modelInstance);
+    game->ballInstance.prefab = &game->ballPrefab;
+    game->titleOpen = true;
     InitAudioDevice();
     game->audioReady = IsAudioDeviceReady();
     if (game->audioReady)
@@ -210,18 +220,51 @@ static bool InitStarter(void *state)
     return true;
 }
 
+static bool StarterAudioAvailable(const StarterGame *game)
+{
+    return IsSoundValid(game->ballSound) || IsMusicValid(game->music.track);
+}
+
+static void UpdateStarterAudio(StarterGame *game)
+{
+    game->dropVoice.options.muted = game->muted;
+    game->bounceVoice.options.muted = game->muted;
+    UpdateAudioVoice(&game->dropVoice, game->camera);
+    UpdateAudioVoice(&game->bounceVoice, game->camera);
+    UpdateSceneMusic(&game->music, game->muted);
+}
+
 static bool UpdateStarter(void *state, float deltaTime)
 {
     StarterGame *game = state;
     InputAction actions[ACTION_COUNT];
     InputPointer pointer = PollInput(gameKeys, actions, ACTION_COUNT);
     if (actions[ACTION_FULLSCREEN].pressed) ToggleGameFullscreen();
+    if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+    if (game->titleOpen)
+    {
+        game->titleTime = fmodf(game->titleTime + deltaTime, 60.0f);
+        game->titlePointer = pointer.position;
+        TitleAction action = ReadTitleScreen(pointer, StarterAudioAvailable(game));
+        if (action == TITLE_QUIT || actions[ACTION_EXIT].pressed) return false;
+        if (action == TITLE_AUDIO && !actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+        if (action == TITLE_START || actions[ACTION_START].pressed)
+        {
+            game->titleOpen = false;
+            game->pointerCaptured = pointer.down;
+            pointer.pressed = false;
+        }
+        else
+        {
+            UpdateStarterAudio(game);
+            return true;
+        }
+    }
     game->dropBounds = (Rectangle){ GetScreenWidth() - 128.0f, 8, 116, 25 };
     game->drop = ReadUiButton(game->dropBounds, pointer, !game->walking);
     if (!pointer.down) game->pointerCaptured = false;
     if (game->drop.activated) game->pointerCaptured = true;
 
-    if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
     bool dropped = game->drop.activated || actions[ACTION_DROP].pressed;
     float impact = 0.0f;
     if (dropped)
@@ -232,9 +275,9 @@ static bool UpdateStarter(void *state, float deltaTime)
             .radius = 0.22f,
             .restitution = 0.66f,
         };
-        game->scene[1].enabled = true;
+        game->ballInstance.enabled = true;
     }
-    if (game->scene[1].enabled && !game->ball.resting)
+    if (game->ballInstance.enabled && !game->ball.resting)
     {
         float previousVelocity = game->ball.velocity.y;
         StepPhysicsSphere(&game->ball, game->floorHeight, deltaTime);
@@ -243,12 +286,13 @@ static bool UpdateStarter(void *state, float deltaTime)
         UpdateBallMarker(&game->ballMarker, game->ball, game->floorHeight);
     }
 
-    if (game->scene[1].enabled)
+    if (game->ballInstance.enabled)
     {
-        Vector3 radius = { game->ball.radius, game->ball.radius, game->ball.radius };
-        game->scene[1].bounds.min = Vector3Subtract(game->ball.position, radius);
+        game->ballInstance.position = game->ball.position;
+        game->ballInstance.scale = game->ball.radius;
+        game->scene[1] = MakePrefabSceneObject(&game->ballInstance);
+        // The attached dynamic marker remains at ground level.
         game->scene[1].bounds.min.y = fminf(game->scene[1].bounds.min.y, game->floorHeight);
-        game->scene[1].bounds.max = Vector3Add(game->ball.position, radius);
     }
     if (actions[ACTION_OCCLUSION].pressed) game->occlusionEnabled = !game->occlusionEnabled;
 
@@ -262,7 +306,13 @@ static bool UpdateStarter(void *state, float deltaTime)
         game->walking = false;
         EnableCursor();
     }
-    else if (!game->walking && escape) return false;
+    else if (!game->walking && escape)
+    {
+        game->titleOpen = true;
+        game->titlePointer = pointer.position;
+        UpdateStarterAudio(game);
+        return true;
+    }
     else if (!game->walking && toggleWalk && IsWindowFocused())
     {
         game->walking = true;
@@ -322,19 +372,40 @@ static bool UpdateStarter(void *state, float deltaTime)
         options.muted = game->muted;
         PlayAudioVoice(&game->bounceVoice, options, game->camera);
     }
-    game->dropVoice.options.muted = game->muted;
-    game->bounceVoice.options.muted = game->muted;
-    UpdateAudioVoice(&game->dropVoice, game->camera);
-    UpdateAudioVoice(&game->bounceVoice, game->camera);
-    UpdateSceneMusic(&game->music, game->muted);
-
+    UpdateStarterAudio(game);
     return true;
+}
+
+static void DrawStarterTitle(const StarterGame *game)
+{
+    float angle = 0.68f + 0.23f * sinf(game->titleTime * (2.0f * PI) / 15.0f);
+    Camera3D camera = game->camera;
+    camera.position = (Vector3){ 6.0f * sinf(angle), 2.1f, 6.0f * cosf(angle) };
+    camera.target = Vector3Zero();
+    if (GetScreenWidth() >= 760)
+    {
+        Vector3 offset = { -1.35f * cosf(angle), 0.0f, 1.35f * sinf(angle) };
+        camera.position = Vector3Add(camera.position, offset);
+        camera.target = offset;
+    }
+
+    BeginMode3D(camera);
+    DrawSky(game->sky, camera.position);
+    SceneObject showcase = MakePrefabSceneObject(&game->titleModel);
+    DrawScene(&showcase, 1, camera, (float)rlGetCullDistanceNear(), false);
+    EndMode3D();
+    DrawTitleScreen(game->titlePointer, game->muted, StarterAudioAvailable(game));
 }
 
 static void DrawStarter(const void *state)
 {
     const StarterGame *game = state;
     ClearBackground((Color){ 29, 42, 54, 255 });
+    if (game->titleOpen)
+    {
+        DrawStarterTitle(game);
+        return;
+    }
     BeginMode3D(game->camera);
     if (game->showSky) DrawSky(game->sky, game->camera.position);
     if (game->grid)
@@ -360,13 +431,13 @@ static void DrawStarter(const void *state)
     DrawText(game->walking ? GAME_WINDOW_TITLE " / Walk" : GAME_WINDOW_TITLE " / Orbit", 20, 10, 23, RAYWHITE);
     DrawText(game->walking
              ? "WASD move / Mouse look / F or Esc orbit / R reset / Space shader / B sky / G grid"
-             : "Drag orbit / Scroll zoom / F walk / R reset / Space shader / B sky / G grid",
+             : "Drag orbit / Scroll zoom / F walk / Esc menu / R reset / Space shader / B sky / G grid",
              20, 43, 14, (Color){ 195, 214, 230, 255 });
     DrawUiPanel((Rectangle){ 12, GetScreenHeight() - 33.0f, 420, 25 },
                 (Color){ 15, 24, 35, 235 });
     DrawText(TextFormat("Drawn %d  /  Occluded %d  /  C culling: %s  /  M audio: %s",
              (int)stats.drawn, (int)stats.occluded, game->occlusionEnabled ? "on" : "off",
-             !IsSoundValid(game->ballSound) && !IsMusicValid(game->music.track) ? "unavailable" : (game->muted ? "off" : "on")),
+             !StarterAudioAvailable(game) ? "unavailable" : (game->muted ? "off" : "on")),
              20, GetScreenHeight() - 27, 14, RAYWHITE);
 }
 

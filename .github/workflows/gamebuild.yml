@@ -49,6 +49,42 @@ jobs:
           cmake --build build --config Release --parallel
           ./build/Release/benno111-engene.exe --help
 
+      - name: Package and test Linux installer
+        if: matrix.platform == 'linux'
+        run: |
+          bash installers/build-linux.sh build benno111-engene-linux-setup.run
+          export XDG_DATA_HOME="$RUNNER_TEMP/benno111-installer-test"
+          ./benno111-engene-linux-setup.run --yes
+          "$XDG_DATA_HOME/benno111-engene/benno111-engene" --help
+          cmp LICENSE "$XDG_DATA_HOME/benno111-engene/LICENSE"
+          "$XDG_DATA_HOME/benno111-engene/uninstall" --yes
+          test ! -e "$XDG_DATA_HOME/benno111-engene"
+          tar -czf benno111-engene-linux-installer.tar.gz benno111-engene-linux-setup.run
+
+      - name: Package and test Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $root = (Get-Location).Path
+          $setup = Join-Path $root 'benno111-engene-windows-setup.exe'
+          & $makensis "/DBUILD_DIR=$root\build\Release" "/DPROJECT_DIR=$root" "/DOUTPUT_FILE=$setup" installers/windows.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installed = Join-Path $env:LOCALAPPDATA 'benno111-engene'
+          $install = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Setup failed: $($install.ExitCode)" }
+          & (Join-Path $installed 'benno111-engene.exe') --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash LICENSE).Hash -ne (Get-FileHash (Join-Path $installed 'LICENSE')).Hash) {
+            throw 'The installed license differs from the repository license.'
+          }
+          $uninstall = Start-Process -FilePath (Join-Path $installed 'uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path $installed)) { throw 'Uninstall failed.' }
+
       - name: Set up Java
         if: matrix.platform == 'android'
         uses: actions/setup-java@v4
@@ -112,6 +148,22 @@ jobs:
             build/Release/benno111-engene.exe
             build/Release/assets/
             build/Release/shaders/
+          if-no-files-found: error
+
+      - name: Upload Linux installer
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-linux-installer
+          path: benno111-engene-linux-installer.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-windows-installer
+          path: benno111-engene-windows-setup.exe
           if-no-files-found: error
 
       - name: Upload Android APK
