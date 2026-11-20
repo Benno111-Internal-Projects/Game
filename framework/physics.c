@@ -1,0 +1,35 @@
+#include "physics.h"
+#include "raymath.h"
+
+#include <math.h>
+
+void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt)
+{
+    if (body->resting || !(dt > 0.0f)) return;
+
+    const float gravity = 9.81f;
+    const float floorCenter = floorHeight + body->radius;
+    dt = fminf(dt, 0.1f);
+    int steps = (int)ceilf(dt * 120.0f);
+    float step = dt / steps;
+
+    for (int i = 0; i < steps; ++i)
+    {
+        body->velocity.y -= gravity * step;
+        body->position = Vector3Add(body->position, Vector3Scale(body->velocity, step));
+        if (body->position.y > floorCenter) continue;
+
+        body->position.y = floorCenter;
+        if (body->velocity.y >= 0.0f) continue;
+
+        body->velocity.y *= -Clamp(body->restitution, 0.0f, 1.0f);
+        body->velocity.x *= 0.7f;
+        body->velocity.z *= 0.7f;
+        if (body->velocity.y < 0.35f)
+        {
+            body->velocity = Vector3Zero();
+            body->resting = true;
+            break;
+        }
+    }
+}

@@ -1,0 +1,131 @@
+name: Game build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gamebuild:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-2022
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: android
+            runner: ubuntu-24.04
+          - platform: ios
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorg-dev libgl1-mesa-dev libasound2-dev
+
+      - name: Build Linux
+        if: matrix.platform == 'linux'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_WAYLAND=OFF
+          cmake --build build --parallel
+          ./build/benno111-engene --help
+          tar -czf benno111-engene-linux.tar.gz -C build benno111-engene assets shaders
+
+      - name: Build Windows
+        if: matrix.platform == 'windows'
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release --parallel
+          ./build/Release/benno111-engene.exe --help
+
+      - name: Set up Java
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        if: matrix.platform == 'android'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build Android APK
+        if: matrix.platform == 'android'
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          gradle -p android assembleDebug
+          shopt -s nullglob
+          apks=(android/build/outputs/apk/debug/*.apk)
+          test "${#apks[@]}" -eq 1
+          unzip -Z1 "${apks[0]}" > apk-files.txt
+          grep -Fx 'lib/arm64-v8a/libbenno111_engene.so' apk-files.txt
+          grep -Fx 'assets/model.vert' apk-files.txt
+          grep -Fx 'assets/sample.obj' apk-files.txt
+          grep -Fx 'assets/starter-ambient.ogg' apk-files.txt
+
+      - name: Build unsigned iOS device app and package IPA
+        if: matrix.platform == 'ios'
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          cmake --build build --config Release --target benno111-engene
+          app="$(find build -type d -name benno111-engene.app -print -quit)"
+          test -n "$app"
+          test -f "$app/assets/sample.obj"
+          test -f "$app/shaders/model.vert"
+          mkdir -p ios-package/Payload
+          cp -R "$app" ios-package/Payload/
+          (cd ios-package && zip -qry ../benno111-engene-ios.ipa Payload)
+          unzip -Z1 benno111-engene-ios.ipa > ipa-files.txt
+          grep -Fx 'Payload/benno111-engene.app/Info.plist' ipa-files.txt
+          grep -Fx 'Payload/benno111-engene.app/benno111-engene' ipa-files.txt
+
+      - name: Upload Linux build
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-linux
+          path: benno111-engene-linux.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Windows build
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-windows
+          path: |
+            build/Release/benno111-engene.exe
+            build/Release/assets/
+            build/Release/shaders/
+          if-no-files-found: error
+
+      - name: Upload Android APK
+        if: matrix.platform == 'android'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-android
+          path: android/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload iOS IPA
+        if: matrix.platform == 'ios'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benno111-engene-ios
+          path: benno111-engene-ios.ipa
+          if-no-files-found: error
