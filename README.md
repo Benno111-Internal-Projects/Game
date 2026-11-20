@@ -19,6 +19,9 @@ cmake --build build --config Release
 
 With a multi-config generator, look for the executable and its asset folders in `build/Release/`. The sample is a UV-mapped OBJ with a material and PNG texture. Drag to orbit, scroll to zoom, press **Space** to compare the custom lighting with raylib's default shader, or use **B** for sky visibility, **G** for grid visibility, and **R** to reset the camera.
 
+On desktop, **F11** switches between borderless fullscreen and the previous window
+size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
+
 ## Movement
 
 Press **F** for first-person mode. Move with **WASD** and look with the mouse.

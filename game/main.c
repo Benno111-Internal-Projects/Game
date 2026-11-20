@@ -10,6 +10,7 @@
 #include "game_logic.h"
 #include "physics.h"
 #include "ui.h"
+#include "window.h"
 #include "scene.h"
 #include "scene_music.h"
 #include "render.h"
@@ -25,7 +26,7 @@
 enum GameAction {
     ACTION_SHADER, ACTION_SKY, ACTION_GRID, ACTION_EXIT, ACTION_WALK,
     ACTION_RESET, ACTION_RIGHT, ACTION_LEFT, ACTION_FORWARD, ACTION_BACK,
-    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_COUNT
+    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_FULLSCREEN, ACTION_COUNT
 };
 
 static const int gameKeys[ACTION_COUNT] = {
@@ -33,7 +34,7 @@ static const int gameKeys[ACTION_COUNT] = {
     [ACTION_EXIT] = KEY_ESCAPE, [ACTION_WALK] = KEY_F, [ACTION_RESET] = KEY_R,
     [ACTION_RIGHT] = KEY_D, [ACTION_LEFT] = KEY_A, [ACTION_FORWARD] = KEY_W,
     [ACTION_BACK] = KEY_S, [ACTION_DROP] = KEY_P, [ACTION_OCCLUSION] = KEY_C,
-    [ACTION_MUTE] = KEY_M,
+    [ACTION_MUTE] = KEY_M, [ACTION_FULLSCREEN] = KEY_F11,
 };
 
 typedef struct ModelDrawData {
@@ -214,6 +215,7 @@ static bool UpdateStarter(void *state, float deltaTime)
     StarterGame *game = state;
     InputAction actions[ACTION_COUNT];
     InputPointer pointer = PollInput(gameKeys, actions, ACTION_COUNT);
+    if (actions[ACTION_FULLSCREEN].pressed) ToggleGameFullscreen();
     game->dropBounds = (Rectangle){ GetScreenWidth() - 128.0f, 8, 116, 25 };
     game->drop = ReadUiButton(game->dropBounds, pointer, !game->walking);
     if (!pointer.down) game->pointerCaptured = false;
@@ -347,6 +349,14 @@ static void DrawStarter(const void *state)
     EndMode3D();
     DrawUiPanel((Rectangle){ 0, 0, (float)GetScreenWidth(), 70 }, (Color){ 15, 24, 35, 235 });
     DrawUiButton(game->dropBounds, "Drop ball [P]", game->drop, !game->walking);
+    if (CanToggleGameFullscreen())
+    {
+        const int fontSize = 14;
+        const char *shortcut = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE)
+            ? "F11 Exit fullscreen" : "F11 Fullscreen";
+        int x = (int)game->dropBounds.x - 12 - MeasureText(shortcut, fontSize);
+        DrawText(shortcut, x, 14, fontSize, RAYWHITE);
+    }
     DrawText(game->walking ? GAME_WINDOW_TITLE " / Walk" : GAME_WINDOW_TITLE " / Orbit", 20, 10, 23, RAYWHITE);
     DrawText(game->walking
              ? "WASD move / Mouse look / F or Esc orbit / R reset / Space shader / B sky / G grid"
