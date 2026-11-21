@@ -8,6 +8,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if(CMAKE_VERSION VERSION_LESS 3.24)
         message(FATAL_ERROR "The iOS build requires CMake 3.24 or newer")
     endif()
+    enable_language(OBJC)
     set(PLATFORM SDL CACHE STRING "raylib platform" FORCE)
     set(OPENGL_VERSION "ES 2.0" CACHE STRING "raylib graphics API" FORCE)
 

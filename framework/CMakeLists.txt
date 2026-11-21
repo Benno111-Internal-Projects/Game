@@ -13,6 +13,16 @@ if(NOT TARGET raylib)
     FetchContent_MakeAvailable(raylib)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # On iOS, miniaudio uses Objective-C AVAudioSession inside raylib's raudio.c.
+    get_target_property(raylib_source_dir raylib SOURCE_DIR)
+    set_source_files_properties("${raylib_source_dir}/raudio.c"
+        TARGET_DIRECTORY raylib PROPERTIES LANGUAGE OBJC)
+    target_link_libraries(raylib
+        "$<LINK_LIBRARY:FRAMEWORK,AVFoundation>"
+        "$<LINK_LIBRARY:FRAMEWORK,AudioToolbox>")
+endif()
+
 add_library(render-framework STATIC
     render.c camera.c physics.c input.c ui.c dynamic_buffer.c
     scene.c lod.c occlusion.c game_logic.c audio.c scene_music.c window.c prefab.c terrain.c player.c)
