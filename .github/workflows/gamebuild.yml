@@ -117,7 +117,7 @@ jobs:
           grep -Fx 'assets/model.vert' apk-files.txt
           grep -Fx 'assets/sample.obj' apk-files.txt
           grep -Fx 'assets/starter-ambient.ogg' apk-files.txt
-          for level in {01..07}; do grep -Fx "assets/levels/$level.level" apk-files.txt; done
+          for level in 01 02 03 04 05 06 07; do grep -Fx "assets/levels/$level.level" apk-files.txt; done
 
       - name: Build unsigned iOS device app and package IPA
         if: matrix.platform == 'ios'
@@ -131,13 +131,15 @@ jobs:
           test -n "$app"
           test -f "$app/assets/sample.obj"
           test -f "$app/shaders/model.vert"
-          for level in {01..07}; do test -f "$app/assets/levels/$level.level"; done
           mkdir -p ios-package/Payload
           cp -R "$app" ios-package/Payload/
           (cd ios-package && zip -qry ../benno111-engene-ios.ipa Payload)
           unzip -Z1 benno111-engene-ios.ipa > ipa-files.txt
           grep -Fx 'Payload/benno111-engene.app/Info.plist' ipa-files.txt
           grep -Fx 'Payload/benno111-engene.app/benno111-engene' ipa-files.txt
+          for level in 01 02 03 04 05 06 07; do
+            grep -Fx "Payload/benno111-engene.app/assets/levels/$level.level" ipa-files.txt
+          done
 
       - name: Upload Linux build
         if: matrix.platform == 'linux'

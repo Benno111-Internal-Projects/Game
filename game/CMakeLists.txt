@@ -7,8 +7,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_definitions(benno111-engene PRIVATE BENNO_IOS)
     target_link_libraries(benno111-engene PRIVATE SDL2::SDL2main SDL2::SDL2)
     target_link_options(benno111-engene PRIVATE "LINKER:-ObjC")
+    set(bundle_identifier "com.benno111.engene")
     set_target_properties(benno111-engene PROPERTIES
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.benno111.engene"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${bundle_identifier}"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${bundle_identifier}"
         MACOSX_BUNDLE_BUNDLE_NAME "benno111 engene"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
         MACOSX_BUNDLE_BUNDLE_VERSION "1"
