@@ -19,6 +19,7 @@ void UnloadTerrainMap(TerrainMap *map);
 void SyncTerrainMesh(TerrainMap *map);
 void DrawTerrainMap(const TerrainMap *map);
 float GetTerrainHeight(const TerrainMap *map, float x, float z);
+Vector3 GetTerrainNormal(const TerrainMap *map, float x, float z);
 RayCollision PickTerrain(const TerrainMap *map, Ray ray);
 
 // Positive amount raises, negative amount lowers, and flatten levels to baseHeight.

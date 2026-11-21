@@ -1,6 +1,7 @@
 #include "terrain.h"
 #include "raymath.h"
 #include <math.h>
+#include <stddef.h>
 
 static const float spacing = 0.625f;
 static const float edge = 10.0f;
@@ -101,8 +102,9 @@ void DrawTerrainMap(const TerrainMap *map)
     if (map->enabled) DrawMesh(map->mesh, map->material, MatrixIdentity());
 }
 
-float GetTerrainHeight(const TerrainMap *map, float x, float z)
+static float SampleTerrainSurface(const TerrainMap *map, float x, float z, Vector3 *normal)
 {
+    if (normal) *normal = (Vector3){ 0, 1, 0 };
     if (!map->enabled || !(x >= -edge && x <= edge && z >= -edge && z <= edge))
         return map->baseHeight;
     float gx = (x + edge) / spacing, gz = (z + edge) / spacing;
@@ -110,8 +112,25 @@ float GetTerrainHeight(const TerrainMap *map, float x, float z)
     float u = gx - ix, v = gz - iz;
     float a = SamplePoint(map, ix, iz).y, b = SamplePoint(map, ix, iz + 1).y;
     float c = SamplePoint(map, ix + 1, iz).y, d = SamplePoint(map, ix + 1, iz + 1).y;
-    if (u + v <= 1) return a + u * (c - a) + v * (b - a);
+    if (u + v <= 1)
+    {
+        if (normal) *normal = Vector3Normalize((Vector3){ a - c, spacing, a - b });
+        return a + u * (c - a) + v * (b - a);
+    }
+    if (normal) *normal = Vector3Normalize((Vector3){ b - d, spacing, c - d });
     return d + (1 - u) * (b - d) + (1 - v) * (c - d);
+}
+
+float GetTerrainHeight(const TerrainMap *map, float x, float z)
+{
+    return SampleTerrainSurface(map, x, z, NULL);
+}
+
+Vector3 GetTerrainNormal(const TerrainMap *map, float x, float z)
+{
+    Vector3 normal;
+    SampleTerrainSurface(map, x, z, &normal);
+    return normal;
 }
 
 RayCollision PickTerrain(const TerrainMap *map, Ray ray)

@@ -76,6 +76,11 @@ static float TerrainGround(const void *surface, float x, float z)
     return GetTerrainHeight(surface, x, z);
 }
 
+static Vector3 TerrainSlope(const void *surface, float x, float z)
+{
+    return GetTerrainNormal(surface, x, z);
+}
+
 static Vector2 UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, const TerrainMap *terrain)
 {
     float x = ball.position.x;
@@ -260,7 +265,10 @@ static void UpdateStarterAudio(StarterGame *game)
 
 static PlayerWorld GetPlayerWorld(const StarterGame *game, BoundingBox boxes[EDITOR_MAX_OBJECTS])
 {
-    PlayerWorld world = { .groundHeight = TerrainGround, .ground = &game->editor.terrain, .boxes = boxes };
+    PlayerWorld world = {
+        .groundHeight = TerrainGround, .groundNormal = TerrainSlope,
+        .ground = &game->editor.terrain, .boxes = boxes,
+    };
     // The bundled model is a solid crate. External models may be hollow or irregular.
     if (!game->modelPath)
     {
@@ -579,6 +587,8 @@ static void DrawStarter(const void *state)
         int x = GetScreenWidth() / 2, y = GetScreenHeight() / 2;
         DrawLine(x - 5, y, x + 5, y, RAYWHITE);
         DrawLine(x, y - 5, x, y + 5, RAYWHITE);
+        if (game->player.sliding)
+            DrawText("Sliding", x - MeasureText("Sliding", 14) / 2, y + 16, 14, RAYWHITE);
         if (touch)
         {
             DrawPlayerTouch(&game->playerTouch);

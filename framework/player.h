@@ -4,11 +4,15 @@
 #include "physics.h"
 #include <stddef.h>
 
+typedef Vector3 (*PlayerGroundNormal)(const void *surface, float x, float z);
+
 typedef struct PlayerWorld {
     PhysicsGroundHeight groundHeight;
     const void *ground;
     const BoundingBox *boxes;
     size_t boxCount;
+    // Optional upward unit normal. The controller estimates it from heights if omitted.
+    PlayerGroundNormal groundNormal;
 } PlayerWorld;
 
 typedef struct PlayerController {
@@ -17,6 +21,7 @@ typedef struct PlayerController {
     float radius, height, eyeHeight;
     float jumpBuffer, groundGrace;
     bool grounded;
+    bool sliding;
 } PlayerController;
 
 typedef struct PlayerInput {

@@ -31,6 +31,10 @@ keys to land on top. **R** resets the player. **F** or **Esc** switches back to
 orbit, where the player avatar remains visible. On Android and iOS, use
 **Player**, the on-screen stick, a right-side swipe to look, and **Jump**.
 
+Terrain up to **45°** is walkable. The player stays grounded while moving
+down a walkable slope and can jump from it. Steeper faces block uphill
+movement and make the player slide downhill on contact.
+
 The example's crate instances are solid. The collision controller uses
 axis-aligned box bounds, including conservative bounds for rotated crates.
 Custom imported models are rendered without box collision. Framework users
