@@ -9,6 +9,8 @@
 #include "input.h"
 #include "game_logic.h"
 #include "physics.h"
+#include "player.h"
+#include "player_touch.h"
 #include "prefab.h"
 #include "ui.h"
 #include "title_screen.h"
@@ -27,17 +29,18 @@
 #include <string.h>
 
 enum GameAction {
-    ACTION_SHADER, ACTION_SKY, ACTION_GRID, ACTION_EXIT, ACTION_WALK,
+    ACTION_SPACE, ACTION_SKY, ACTION_GRID, ACTION_EXIT, ACTION_WALK,
     ACTION_RESET, ACTION_RIGHT, ACTION_LEFT, ACTION_FORWARD, ACTION_BACK,
-    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_FULLSCREEN, ACTION_START, ACTION_COUNT
+    ACTION_DROP, ACTION_OCCLUSION, ACTION_MUTE, ACTION_FULLSCREEN, ACTION_START, ACTION_SPRINT, ACTION_COUNT
 };
 
 static const int gameKeys[ACTION_COUNT] = {
-    [ACTION_SHADER] = KEY_SPACE, [ACTION_SKY] = KEY_B, [ACTION_GRID] = KEY_G,
+    [ACTION_SPACE] = KEY_SPACE, [ACTION_SKY] = KEY_B, [ACTION_GRID] = KEY_G,
     [ACTION_EXIT] = KEY_ESCAPE, [ACTION_WALK] = KEY_F, [ACTION_RESET] = KEY_R,
     [ACTION_RIGHT] = KEY_D, [ACTION_LEFT] = KEY_A, [ACTION_FORWARD] = KEY_W,
     [ACTION_BACK] = KEY_S, [ACTION_DROP] = KEY_P, [ACTION_OCCLUSION] = KEY_C,
     [ACTION_MUTE] = KEY_M, [ACTION_FULLSCREEN] = KEY_F11, [ACTION_START] = KEY_ENTER,
+    [ACTION_SPRINT] = KEY_LEFT_SHIFT,
 };
 
 typedef struct BallDrawData {
@@ -94,13 +97,6 @@ static Vector2 UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball,
     return limits;
 }
 
-static WalkCamera SpawnWalker(float orbitYaw, float floorHeight)
-{
-    Vector3 position = { 5.5f * sinf(orbitYaw), floorHeight + 1.65f, 5.5f * cosf(orbitYaw) };
-    return (WalkCamera){ .position = position, .yaw = orbitYaw + PI,
-                         .pitch = atan2f(-position.y, 5.5f) };
-}
-
 typedef struct StarterGame {
     const char *modelPath;
     const char *texturePath;
@@ -118,6 +114,9 @@ typedef struct StarterGame {
     float yaw, pitch, distance;
     bool custom, showSky, grid, walking, pointerCaptured, occlusionEnabled;
     WalkCamera walk;
+    PlayerController player;
+    PlayerTouch playerTouch;
+    bool playerSpawned;
     PhysicsSphere ball;
     BallDrawData ballDraw;
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
@@ -128,8 +127,8 @@ typedef struct StarterGame {
     Vector2 titlePointer;
     SceneObject ballObject;
     Vector2 ballMarkerHeight;
-    Rectangle dropBounds;
-    UiButtonState drop;
+    Rectangle dropBounds, modeBounds, menuBounds;
+    UiButtonState drop, modeButton, menuButton;
     SceneMusic music;
     Sound ballSound;
     AudioVoice dropVoice, bounceVoice;
@@ -259,6 +258,59 @@ static void UpdateStarterAudio(StarterGame *game)
     UpdateSceneMusic(&game->music, game->muted);
 }
 
+static PlayerWorld GetPlayerWorld(const StarterGame *game, BoundingBox boxes[EDITOR_MAX_OBJECTS])
+{
+    PlayerWorld world = { .groundHeight = TerrainGround, .ground = &game->editor.terrain, .boxes = boxes };
+    // The bundled model is a solid crate. External models may be hollow or irregular.
+    if (!game->modelPath)
+    {
+        for (int i = 0; i < game->editor.count; ++i)
+        {
+            const EditorEntry *entry = &game->editor.entries[i];
+            if (entry->kind != 0) continue;
+            SceneObject object = MakePrefabSceneObject(&entry->instance);
+            if (object.enabled) boxes[world.boxCount++] = object.bounds;
+        }
+    }
+    return world;
+}
+
+static void ResetStarterPlayer(StarterGame *game, const PlayerWorld *world)
+{
+    float yaw = game->yaw;
+    game->player = SpawnPlayer((Vector2){ 5.5f * sinf(yaw), 5.5f * cosf(yaw) }, world);
+    Vector3 eye = GetPlayerEye(&game->player);
+    game->walk = (WalkCamera){ .position = eye, .yaw = yaw + PI, .pitch = atan2f(-eye.y, 5.5f) };
+    game->playerSpawned = true;
+}
+
+static void MoveStarterPlayer(StarterGame *game, const PlayerWorld *world, Vector2 movement,
+                              Vector2 look, bool jump, bool sprint, float dt)
+{
+    game->walk.position = GetPlayerEye(&game->player);
+    UpdateWalkCamera(&game->camera, &game->walk, look, Vector2Zero(), 0);
+    Vector3 direction = Vector3Subtract(game->camera.target, game->camera.position);
+    Vector2 forward = Vector2Normalize((Vector2){ direction.x, direction.z });
+    Vector2 right = { -forward.y, forward.x };
+    PlayerInput input = {
+        .movement = Vector2Add(Vector2Scale(right, movement.x), Vector2Scale(forward, movement.y)),
+        .jumpPressed = jump,
+        .sprint = sprint,
+    };
+    StepPlayer(&game->player, world, input, dt);
+    game->walk.position = game->camera.position = GetPlayerEye(&game->player);
+    game->camera.target = Vector3Add(game->camera.position, direction);
+}
+
+static void DrawPlayerAvatar(const PlayerController *player)
+{
+    Vector3 bottom = player->feet;
+    bottom.y += player->radius;
+    Vector3 top = player->feet;
+    top.y += player->height - player->radius;
+    DrawCapsule(bottom, top, player->radius, 10, 5, (Color){ 187, 224, 153, 255 });
+}
+
 static bool UpdateStarter(void *state, float deltaTime)
 {
     StarterGame *game = state;
@@ -289,6 +341,7 @@ static bool UpdateStarter(void *state, float deltaTime)
         if (action == TITLE_EDITOR)
         {
             game->editorOpen = true;
+            game->playerSpawned = false;
             game->titleOpen = false;
             game->editor.pointer = pointer.position;
             UpdateStarterAudio(game);
@@ -308,8 +361,14 @@ static bool UpdateStarter(void *state, float deltaTime)
     }
     game->dropBounds = (Rectangle){ GetScreenWidth() - 128.0f, 8, 116, 25 };
     game->drop = ReadUiButton(game->dropBounds, pointer, !game->walking);
+    bool touch = HasPlayerTouchControls();
+    game->modeBounds = (Rectangle){ game->dropBounds.x - 78.0f, 8, 70, 25 };
+    game->menuBounds = (Rectangle){ game->modeBounds.x - 68.0f, 8, 60, 25 };
+    game->modeButton = ReadUiButton(game->modeBounds, pointer, touch);
+    game->menuButton = ReadUiButton(game->menuBounds, pointer, touch && !game->walking);
     if (!pointer.down) game->pointerCaptured = false;
-    if (game->drop.activated) game->pointerCaptured = true;
+    if (game->drop.activated || game->modeButton.activated || game->menuButton.activated)
+        game->pointerCaptured = true;
 
     const TerrainMap *terrain = &game->editor.terrain;
     bool dropped = game->drop.activated || actions[ACTION_DROP].pressed;
@@ -347,15 +406,17 @@ static bool UpdateStarter(void *state, float deltaTime)
     }
     if (actions[ACTION_OCCLUSION].pressed) game->occlusionEnabled = !game->occlusionEnabled;
 
-    if (actions[ACTION_SHADER].pressed) game->custom = !game->custom;
+
     if (actions[ACTION_SKY].pressed) game->showSky = !game->showSky;
     if (actions[ACTION_GRID].pressed) game->grid = !game->grid;
-    bool escape = actions[ACTION_EXIT].pressed;
-    bool toggleWalk = actions[ACTION_WALK].pressed;
-    if (game->walking && (escape || toggleWalk || !IsWindowFocused()))
+    BoundingBox playerBoxes[EDITOR_MAX_OBJECTS];
+    PlayerWorld world = GetPlayerWorld(game, playerBoxes);
+    bool escape = actions[ACTION_EXIT].pressed || game->menuButton.activated;
+    bool toggleWalk = actions[ACTION_WALK].pressed || game->modeButton.activated;
+    if (game->walking && (escape || toggleWalk || (!touch && !IsWindowFocused())))
     {
         game->walking = false;
-        EnableCursor();
+        if (!touch) EnableCursor();
     }
     else if (!game->walking && escape)
     {
@@ -364,29 +425,33 @@ static bool UpdateStarter(void *state, float deltaTime)
         UpdateStarterAudio(game);
         return true;
     }
-    else if (!game->walking && toggleWalk && IsWindowFocused())
+    else if (!game->walking && toggleWalk && (touch || IsWindowFocused()))
     {
         game->walking = true;
-        game->walk = SpawnWalker(game->yaw, game->floorHeight);
-        DisableCursor();
+        if (!game->playerSpawned) ResetStarterPlayer(game, &world);
+        ResetPlayerTouch(&game->playerTouch);
+        if (!touch) DisableCursor();
     }
 
     if (game->walking)
     {
         bool resetWalk = actions[ACTION_RESET].pressed;
-        if (resetWalk) game->walk = SpawnWalker(game->yaw, game->floorHeight);
-        Vector2 mouse = (toggleWalk || resetWalk) ? (Vector2){ 0 } : pointer.delta;
+        if (resetWalk) ResetStarterPlayer(game, &world);
+        PlayerTouchInput touchInput = ReadPlayerTouch(&game->playerTouch);
+        Vector2 mouse = touch ? touchInput.look : pointer.delta;
+        if (toggleWalk || resetWalk) mouse = Vector2Zero();
         Vector2 movement = {
             (float)(actions[ACTION_RIGHT].down - actions[ACTION_LEFT].down),
             (float)(actions[ACTION_FORWARD].down - actions[ACTION_BACK].down),
         };
-        UpdateWalkCamera(&game->camera, &game->walk, mouse, movement, 3.5f * fminf(deltaTime, 0.05f));
-        float eyeHeight = GetTerrainHeight(terrain, game->walk.position.x, game->walk.position.z) + 1.65f;
-        game->camera.target.y += eyeHeight - game->camera.position.y;
-        game->camera.position.y = game->walk.position.y = eyeHeight;
+        movement = Vector2Add(movement, touchInput.movement);
+        MoveStarterPlayer(game, &world, movement, mouse,
+            actions[ACTION_SPACE].pressed || touchInput.jumpPressed, actions[ACTION_SPRINT].down, deltaTime);
     }
     else
     {
+        if (actions[ACTION_SPACE].pressed) game->custom = !game->custom;
+        if (game->playerSpawned) StepPlayer(&game->player, &world, (PlayerInput){ 0 }, deltaTime);
         if (actions[ACTION_RESET].pressed) { game->yaw = 0.65f; game->pitch = 0.34f; game->distance = 5.5f; }
         if (pointer.down && !game->pointerCaptured)
         {
@@ -477,6 +542,7 @@ static void DrawStarter(const void *state)
     SceneStats stats = DrawScene(objects, count, camera, (float)rlGetCullDistanceNear(),
                                 !game->editorOpen && game->occlusionEnabled);
     if (game->editorOpen) DrawEditorSelection(&game->editor);
+    else if (game->playerSpawned && !game->walking) DrawPlayerAvatar(&game->player);
     EndMode3D();
     if (game->editorOpen)
     {
@@ -484,7 +550,13 @@ static void DrawStarter(const void *state)
         return;
     }
     DrawUiPanel((Rectangle){ 0, 0, (float)GetScreenWidth(), 70 }, (Color){ 15, 24, 35, 235 });
-    DrawUiButton(game->dropBounds, "Drop ball [P]", game->drop, !game->walking);
+    bool touch = HasPlayerTouchControls();
+    DrawUiButton(game->dropBounds, touch ? "Drop ball" : "Drop ball [P]", game->drop, !game->walking);
+    if (touch)
+    {
+        DrawUiButton(game->modeBounds, game->walking ? "Orbit" : "Player", game->modeButton, true);
+        if (!game->walking) DrawUiButton(game->menuBounds, "Menu", game->menuButton, true);
+    }
     if (CanToggleGameFullscreen())
     {
         const int fontSize = 14;
@@ -493,11 +565,26 @@ static void DrawStarter(const void *state)
         int x = (int)game->dropBounds.x - 12 - MeasureText(shortcut, fontSize);
         DrawText(shortcut, x, 14, fontSize, RAYWHITE);
     }
-    DrawText(game->walking ? GAME_WINDOW_TITLE " / Walk" : GAME_WINDOW_TITLE " / Orbit", 20, 10, 23, RAYWHITE);
-    DrawText(game->walking
-             ? "WASD move / Mouse look / F or Esc orbit / R reset / Space shader / B sky / G grid"
-             : "Drag orbit / Scroll zoom / F walk / Esc menu / R reset / Space shader / B sky / G grid",
-             20, 43, 14, (Color){ 195, 214, 230, 255 });
+    const char *heading = touch ? (game->walking ? "Player" : "Orbit")
+        : (game->walking ? GAME_WINDOW_TITLE " / Walk" : GAME_WINDOW_TITLE " / Orbit");
+    DrawText(heading, 20, 10, 23, RAYWHITE);
+    const char *controls = game->walking
+        ? "WASD move / Space jump / Shift sprint / Mouse look / R reset / F or Esc orbit"
+        : "Drag orbit / Scroll zoom / F player / Esc menu / R reset / Space shader / B sky / G grid";
+    if (touch)
+        controls = game->walking ? "Move with stick / Swipe to look / Tap Jump" : "Drag to orbit / Tap Player to move";
+    DrawText(controls, 20, 43, 14, (Color){ 195, 214, 230, 255 });
+    if (game->walking)
+    {
+        int x = GetScreenWidth() / 2, y = GetScreenHeight() / 2;
+        DrawLine(x - 5, y, x + 5, y, RAYWHITE);
+        DrawLine(x, y - 5, x, y + 5, RAYWHITE);
+        if (touch)
+        {
+            DrawPlayerTouch(&game->playerTouch);
+            return;
+        }
+    }
     DrawUiPanel((Rectangle){ 12, GetScreenHeight() - 33.0f, 420, 25 },
                 (Color){ 15, 24, 35, 235 });
     DrawText(TextFormat("Drawn %d  /  Occluded %d  /  C culling: %s  /  M audio: %s",

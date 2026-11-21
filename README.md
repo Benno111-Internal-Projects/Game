@@ -22,13 +22,20 @@ With a multi-config generator, look for the executable and its asset folders in 
 On desktop, **F11** switches between borderless fullscreen and the previous window
 size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
-## Movement
+## Player controls
 
-Press **F** for first-person mode. Move with **WASD** and look with the mouse.
-Movement stays at a fixed eye height above the ground. You can pass through models.
-Press **R** to reset the first-person position, or **F** or **Esc** to return to the
-previous orbit view. Switching away from the window also releases the mouse.
-`game/main.c` defines the spawn point, speed, and key bindings. The camera math lives in `framework/camera.c`.
+Press **F** from orbit to take control of the player. Move with **WASD**, look
+with the mouse, press **Space** to jump, and hold **Left Shift** to sprint.
+Approach a crate, jump while moving toward it, then ease off the movement
+keys to land on top. **R** resets the player. **F** or **Esc** switches back to
+orbit, where the player avatar remains visible. On Android and iOS, use
+**Player**, the on-screen stick, a right-side swipe to look, and **Jump**.
+
+The example's crate instances are solid. The collision controller uses
+axis-aligned box bounds, including conservative bounds for rotated crates.
+Custom imported models are rendered without box collision. Framework users
+can supply their own bounds and ground-height sampler through
+`PlayerWorld` in `framework/player.h`.
 
 ## Bring your own assets
 
@@ -210,6 +217,5 @@ size with **Radius −/+**, or choose **Orbit** to move the camera without
 sculpting. Use **Objects** to return to prefab editing.
 
 **Save** stores the terrain in the same scene file as the objects. Older
-object-only saves still load. In play mode, the first-person camera follows
-the ground height and the physics ball collides with the terrain. Place
+object-only saves still load. In play mode, the player follows the ground height while walking and the physics ball collides with the terrain. Place
 prefabs on the terrain using the existing object controls.

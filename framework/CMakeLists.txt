@@ -15,7 +15,7 @@ endif()
 
 add_library(render-framework STATIC
     render.c camera.c physics.c input.c ui.c dynamic_buffer.c
-    scene.c lod.c occlusion.c game_logic.c audio.c scene_music.c window.c prefab.c terrain.c)
+    scene.c lod.c occlusion.c game_logic.c audio.c scene_music.c window.c prefab.c terrain.c player.c)
 target_include_directories(render-framework PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 if(MSVC)
     target_compile_features(render-framework PUBLIC c_std_11)
