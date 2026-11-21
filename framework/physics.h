@@ -15,4 +15,10 @@ typedef struct PhysicsSphere {
 // Set resting to false after applying an impulse.
 void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt);
 
+typedef float (*PhysicsGroundHeight)(const void *surface, float x, float z);
+
+// Samples the ground under the body during each physics substep.
+void StepPhysicsSphereOnSurface(PhysicsSphere *body, PhysicsGroundHeight height,
+                               const void *surface, float dt);
+
 #endif

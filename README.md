@@ -25,7 +25,7 @@ size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 ## Movement
 
 Press **F** for first-person mode. Move with **WASD** and look with the mouse.
-Movement stays at a fixed eye height above the grid. You can pass through models.
+Movement stays at a fixed eye height above the ground. You can pass through models.
 Press **R** to reset the first-person position, or **F** or **Esc** to return to the
 previous orbit view. Switching away from the window also releases the mouse.
 `game/main.c` defines the spawn point, speed, and key bindings. The camera math lives in `framework/camera.c`.
@@ -45,12 +45,12 @@ previous orbit view. Switching away from the window also releases the mouse.
 
 ## Framework modules
 
-- **Physics** (`framework/physics.h`) steps spheres with gravity, floor collision, bounce, and settling. The demo treats the floor as an infinite plane.
+- **Physics** (`framework/physics.h`) steps spheres with gravity, floor collision, bounce, and settling. The demo samples the height map when terrain is enabled and uses a flat plane elsewhere.
 - **Input** (`framework/input.h`) reads game-defined key bindings and pointer state once per frame.
 - **UI** (`framework/ui.h`) provides immediate-mode panels and buttons with pointer hit testing. A button activates on press and can be disabled.
 - **Dynamic buffers** (`framework/dynamic_buffer.h`) provide a growable, GPU-backed triangle position buffer. Replace its active vertices with an upload, draw with a raylib material, and release it before closing the graphics context.
 
-Click **Drop ball** in orbit mode or press **P** in either camera mode. The ball bounces and settles on the grid plane. Its ground marker updates through the dynamic vertex buffer while the ball moves.
+Click **Drop ball** in orbit mode or press **P** in either camera mode. The ball bounces and settles on the ground. Its ground marker updates through the dynamic vertex buffer while the ball moves.
 
 ## Scene, detail, and visibility
 
@@ -200,3 +200,16 @@ starts with the example scene. Use **Load** to restore a saved layout.
 
 Prefabs can opt into yaw rotation with `ScenePrefab.drawRotated`. The scene
 system updates their world bounds and skips using rotated boxes as occluders.
+
+### Edit terrain
+
+In the scene editor, choose **Terrain** to add a 20 × 20 world-unit
+height map. Hold and drag a **Raise**, **Lower**, or **Level** brush over the
+map. **Level** brings the surface back toward its starting height. Adjust its
+size with **Radius −/+**, or choose **Orbit** to move the camera without
+sculpting. Use **Objects** to return to prefab editing.
+
+**Save** stores the terrain in the same scene file as the objects. Older
+object-only saves still load. In play mode, the first-person camera follows
+the ground height and the physics ball collides with the terrain. Place
+prefabs on the terrain using the existing object controls.

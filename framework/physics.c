@@ -2,13 +2,14 @@
 #include "raymath.h"
 
 #include <math.h>
+#include <stddef.h>
 
-void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt)
+static void StepSphere(PhysicsSphere *body, float floorHeight, PhysicsGroundHeight height,
+                       const void *surface, float dt)
 {
     if (body->resting || !(dt > 0.0f)) return;
 
     const float gravity = 9.81f;
-    const float floorCenter = floorHeight + body->radius;
     dt = fminf(dt, 0.1f);
     int steps = (int)ceilf(dt * 120.0f);
     float step = dt / steps;
@@ -17,6 +18,8 @@ void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt)
     {
         body->velocity.y -= gravity * step;
         body->position = Vector3Add(body->position, Vector3Scale(body->velocity, step));
+        float ground = height ? height(surface, body->position.x, body->position.z) : floorHeight;
+        float floorCenter = ground + body->radius;
         if (body->position.y > floorCenter) continue;
 
         body->position.y = floorCenter;
@@ -32,4 +35,16 @@ void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt)
             break;
         }
     }
+}
+
+
+void StepPhysicsSphere(PhysicsSphere *body, float floorHeight, float dt)
+{
+    StepSphere(body, floorHeight, NULL, NULL, dt);
+}
+
+void StepPhysicsSphereOnSurface(PhysicsSphere *body, PhysicsGroundHeight height,
+                               const void *surface, float dt)
+{
+    StepSphere(body, 0, height, surface, dt);
 }

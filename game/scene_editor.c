@@ -6,6 +6,7 @@
 #include <SDL.h>
 #endif
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@ typedef enum EditorCommand {
     Y_MINUS, Y_PLUS, TURN_RIGHT,
     Z_MINUS, Z_PLUS, SMALLER,
     ZOOM_OUT, ZOOM_IN, LARGER,
+    TERRAIN_TAB, BRUSH_RAISE, BRUSH_LOWER, BRUSH_LEVEL, BRUSH_ORBIT, BRUSH_SMALLER, BRUSH_LARGER,
     COMMAND_COUNT
 } EditorCommand;
 
@@ -28,7 +30,23 @@ static const char *const labels[COMMAND_COUNT] = {
     "Y -", "Y +", "Turn +",
     "Z -", "Z +", "Scale -",
     "Zoom -", "Zoom +", "Scale +",
+    "Terrain", "Raise", "Lower", "Level", "Orbit", "Radius -", "Radius +",
 };
+
+static const EditorCommand terrainCommands[] = {
+    BACK, SAVE, LOAD, TERRAIN_TAB, BRUSH_RAISE, BRUSH_LOWER, BRUSH_LEVEL, BRUSH_ORBIT,
+    RESET_VIEW, BRUSH_SMALLER, BRUSH_LARGER, ZOOM_IN, ZOOM_OUT,
+};
+
+static int EditorButtonCount(const SceneEditor *editor)
+{
+    return editor->terrainMode ? (int)(sizeof(terrainCommands) / sizeof(terrainCommands[0])) : TERRAIN_TAB + 1;
+}
+
+static EditorCommand EditorButtonCommand(const SceneEditor *editor, int slot)
+{
+    return editor->terrainMode ? terrainCommands[slot] : (EditorCommand)slot;
+}
 
 static Rectangle EditorPanel(void)
 {
@@ -36,17 +54,18 @@ static Rectangle EditorPanel(void)
     return (Rectangle){ GetScreenWidth() - width, 0, width, (float)GetScreenHeight() };
 }
 
-static Rectangle CommandBounds(Rectangle panel, EditorCommand command)
+static Rectangle CommandBounds(Rectangle panel, int slot)
 {
     float gap = panel.width < 230.0f ? 3.0f : 6.0f;
     float width = (panel.width - 4.0f * gap) / 3.0f;
-    float row = Clamp((panel.height - 110.0f) / 7.0f, 20.0f, 48.0f);
-    return (Rectangle){ panel.x + gap + (command % 3) * (width + gap),
-                        61.0f + (command / 3) * row, width, row - 3.0f };
+    float row = Clamp((panel.height - 110.0f) / 8.0f, 20.0f, 48.0f);
+    return (Rectangle){ panel.x + gap + (slot % 3) * (width + gap),
+                        61.0f + (slot / 3) * row, width, row - 3.0f };
 }
 
 static bool CommandEnabled(const SceneEditor *editor, EditorCommand command)
 {
+    if (command >= TERRAIN_TAB) return true;
     if (command == ADD_MODEL || command == ADD_SPHERE) return editor->count < EDITOR_MAX_OBJECTS;
     if (command == PREVIOUS || command == NEXT) return editor->count > 0;
     return (command != DELETE_OBJECT && (command < X_MINUS || command == ZOOM_OUT || command == ZOOM_IN)) ||
@@ -75,6 +94,8 @@ void InitSceneEditor(SceneEditor *editor, const ScenePrefab *model, float scale,
 {
     *editor = (SceneEditor){ .prefabs = { model, sphere }, .defaultScales = { scale, 0.6f },
                              .floorHeight = floorHeight, .selected = -1 };
+    editor->terrain.baseHeight = floorHeight;
+    editor->brushRadius = 1.5f;
     ResetView(editor);
     AddEntry(editor, 0, Vector3Zero());
 }
@@ -131,11 +152,19 @@ static bool ScenePath(char *path, size_t capacity, bool create)
     return length >= 0 && (size_t)length < capacity;
 }
 
+static bool EnsureTerrain(SceneEditor *editor)
+{
+    if (editor->terrain.mesh.vertices) return true;
+    bool ready = InitTerrainMap(&editor->terrain, editor->floorHeight);
+    editor->terrain.baseHeight = editor->floorHeight;
+    return ready;
+}
+
 static bool SaveEditedScene(const SceneEditor *editor)
 {
     char path[1024];
     if (!ScenePath(path, sizeof(path), true)) return false;
-    char text[EDITOR_MAX_OBJECTS * 160 + 16] = "BENNO-SCENE 1\n";
+    char text[EDITOR_MAX_OBJECTS * 160 + TERRAIN_SAMPLES * 20 + 32] = "BENNO-SCENE 2\n";
     size_t used = strlen(text);
     for (int i = 0; i < editor->count; ++i)
     {
@@ -147,7 +176,38 @@ static bool SaveEditedScene(const SceneEditor *editor)
         if (length < 0 || (size_t)length >= sizeof(text) - used) return false;
         used += (size_t)length;
     }
+    if (editor->terrain.enabled)
+    {
+        static const char section[] = "TERRAIN\n";
+        memcpy(text + used, section, sizeof(section));
+        used += sizeof(section) - 1;
+        for (int i = 0; i < TERRAIN_SAMPLES; ++i)
+        {
+            char separator = (i + 1) % TERRAIN_SIDE == 0 ? '\n' : ' ';
+            int length = snprintf(text + used, sizeof(text) - used, "%.9g%c", editor->terrain.heights[i], separator);
+            if (length < 0 || (size_t)length >= sizeof(text) - used) return false;
+            used += (size_t)length;
+        }
+    }
     return SaveFileText(path, text);
+}
+
+static bool ReadTerrainHeights(const char *text, float heights[TERRAIN_SAMPLES])
+{
+    for (int i = 0; i < TERRAIN_SAMPLES; ++i)
+    {
+        char *end;
+        float height = strtof(text, &end);
+        if (end == text || !(height >= -4.0f && height <= 6.0f) ||
+            (*end && !isspace((unsigned char)*end))) return false;
+        int x = i % TERRAIN_SIDE, z = i / TERRAIN_SIDE;
+        if ((x == 0 || z == 0 || x == TERRAIN_SIDE - 1 || z == TERRAIN_SIDE - 1) && height != 0)
+            return false;
+        heights[i] = height;
+        text = end;
+    }
+    while (isspace((unsigned char)*text)) ++text;
+    return *text == '\0';
 }
 
 static bool LoadEditedScene(SceneEditor *editor)
@@ -157,8 +217,11 @@ static bool LoadEditedScene(SceneEditor *editor)
     char *text = LoadFileText(path);
     if (!text) return false;
 
-    static const char header[] = "BENNO-SCENE 1\n";
-    bool valid = strncmp(text, header, sizeof(header) - 1) == 0;
+    static const char header[] = "BENNO-SCENE 2\n";
+    bool version2 = strncmp(text, header, sizeof(header) - 1) == 0;
+    bool valid = version2 || strncmp(text, "BENNO-SCENE 1\n", sizeof(header) - 1) == 0;
+    bool hasTerrain = false;
+    float heights[TERRAIN_SAMPLES];
     EditorEntry entries[EDITOR_MAX_OBJECTS];
     int count = 0;
     char *line = text + (valid ? sizeof(header) - 1 : 0);
@@ -166,6 +229,12 @@ static bool LoadEditedScene(SceneEditor *editor)
     {
         char *end = strchr(line, '\n');
         if (end) *end = '\0';
+        if (version2 && end && strcmp(line, "TERRAIN") == 0)
+        {
+            hasTerrain = true;
+            valid = ReadTerrainHeights(end + 1, heights);
+            break;
+        }
         EditorEntry entry = { 0 };
         PrefabInstance *instance = &entry.instance;
         char extra;
@@ -187,8 +256,20 @@ static bool LoadEditedScene(SceneEditor *editor)
     }
 
     UnloadFileText(text);
+    if (valid && hasTerrain) valid = EnsureTerrain(editor);
     if (valid)
     {
+        editor->terrain.enabled = hasTerrain;
+        if (hasTerrain)
+        {
+            memcpy(editor->terrain.heights, heights, sizeof(heights));
+            SyncTerrainMesh(&editor->terrain);
+        }
+        else
+        {
+            memset(editor->terrain.heights, 0, sizeof(editor->terrain.heights));
+            editor->terrainMode = false;
+        }
         memcpy(editor->entries, entries, (size_t)count * sizeof(entries[0]));
         editor->count = count;
         editor->selected = count ? 0 : -1;
@@ -202,12 +283,45 @@ static void ApplyCommand(SceneEditor *editor, EditorCommand command)
         editor->status = SaveEditedScene(editor) ? "Scene saved." : "Could not save the scene.";
     else if (command == LOAD)
         editor->status = LoadEditedScene(editor) ? "Scene loaded." : "No valid saved scene.";
+    else if (command == TERRAIN_TAB)
+    {
+        if (editor->terrainMode)
+        {
+            editor->terrainMode = false;
+            return;
+        }
+        if (!EnsureTerrain(editor))
+        {
+            editor->status = "Could not create terrain.";
+            return;
+        }
+        if (!editor->terrain.enabled)
+        {
+            editor->terrain.enabled = true;
+            SyncTerrainMesh(&editor->terrain);
+            editor->status = "Unsaved changes";
+        }
+        editor->terrainMode = true;
+    }
+    else if (command >= BRUSH_RAISE)
+    {
+        switch (command)
+        {
+            case BRUSH_RAISE: editor->brush = TERRAIN_RAISE; break;
+            case BRUSH_LOWER: editor->brush = TERRAIN_LOWER; break;
+            case BRUSH_LEVEL: editor->brush = TERRAIN_LEVEL; break;
+            case BRUSH_ORBIT: editor->brush = TERRAIN_ORBIT; break;
+            case BRUSH_SMALLER: editor->brushRadius = fmaxf(0.75f, editor->brushRadius - 0.5f); break;
+            case BRUSH_LARGER: editor->brushRadius = fminf(5.0f, editor->brushRadius + 0.5f); break;
+            default: break;
+        }
+    }
     else if (command == ADD_MODEL || command == ADD_SPHERE)
     {
         int kind = command == ADD_MODEL ? 0 : 1;
         float x = editor->count ? (float)(editor->count % 5) * 2.25f : 0.0f;
         float z = (float)(editor->count / 5) * 2.25f;
-        float y = editor->floorHeight - editor->prefabs[kind]->localBounds.min.y * editor->defaultScales[kind];
+        float y = GetTerrainHeight(&editor->terrain, x, z) - editor->prefabs[kind]->localBounds.min.y * editor->defaultScales[kind];
         AddEntry(editor, kind, (Vector3){ x, y, z });
         editor->status = "Unsaved changes";
     }
@@ -270,23 +384,44 @@ static void PickObject(SceneEditor *editor, Vector2 pointer)
     }
 }
 
-bool UpdateSceneEditor(SceneEditor *editor, InputPointer pointer)
+bool UpdateSceneEditor(SceneEditor *editor, InputPointer pointer, float deltaTime)
 {
     editor->pointer = pointer.position;
     Rectangle panel = EditorPanel();
     bool onPanel = CheckCollisionPointRec(pointer.position, panel);
     if (pointer.pressed && onPanel)
     {
-        for (int i = 0; i < COMMAND_COUNT; ++i)
+        for (int i = 0; i < EditorButtonCount(editor); ++i)
         {
-            if (!ReadUiButton(CommandBounds(panel, i), pointer, CommandEnabled(editor, i)).activated) continue;
-            if (i == BACK) return false;
-            ApplyCommand(editor, i);
+            EditorCommand command = EditorButtonCommand(editor, i);
+            if (!ReadUiButton(CommandBounds(panel, i), pointer, CommandEnabled(editor, command)).activated) continue;
+            if (command == BACK) return false;
+            ApplyCommand(editor, command);
             break;
         }
     }
     if (!onPanel)
         editor->distance = Clamp(editor->distance * powf(0.85f, pointer.wheel), 2.5f, 36);
+    editor->brushHit = (RayCollision){ 0 };
+    if (editor->terrainMode && editor->brush != TERRAIN_ORBIT)
+    {
+        if (pointer.pressed) editor->brushDown = !onPanel;
+        if (!pointer.down) editor->brushDown = false;
+        if (!onPanel)
+        {
+            editor->brushHit = PickTerrain(&editor->terrain, GetScreenToWorldRay(pointer.position, GetEditorCamera(editor)));
+            if (editor->brushDown && editor->brushHit.hit)
+            {
+                float strength = 3.5f * Clamp(deltaTime, 0.0f, 0.05f);
+                if (editor->brush == TERRAIN_LOWER) strength = -strength;
+                if (SculptTerrain(&editor->terrain, editor->brushHit.point, editor->brushRadius,
+                                  strength, editor->brush == TERRAIN_LEVEL))
+                    editor->status = "Unsaved changes";
+            }
+        }
+        return true;
+    }
+    editor->brushDown = false;
     if (pointer.pressed && !onPanel)
     {
         editor->dragging = true;
@@ -306,7 +441,7 @@ bool UpdateSceneEditor(SceneEditor *editor, InputPointer pointer)
     }
     else if (editor->dragging)
     {
-        if (!editor->moved) PickObject(editor, editor->dragLast);
+        if (!editor->moved && !editor->terrainMode) PickObject(editor, editor->dragLast);
         editor->dragging = false;
     }
     return true;
@@ -314,6 +449,23 @@ bool UpdateSceneEditor(SceneEditor *editor, InputPointer pointer)
 
 void DrawEditorSelection(const SceneEditor *editor)
 {
+    if (editor->terrainMode)
+    {
+        if (!editor->brushHit.hit) return;
+        Vector3 center = editor->brushHit.point;
+        Vector3 last = { center.x + editor->brushRadius, 0, center.z };
+        last.y = GetTerrainHeight(&editor->terrain, last.x, last.z) + 0.035f;
+        for (int i = 1; i <= 32; ++i)
+        {
+            float angle = i * (2.0f * PI / 32.0f);
+            Vector3 next = { center.x + cosf(angle) * editor->brushRadius, 0,
+                             center.z + sinf(angle) * editor->brushRadius };
+            next.y = GetTerrainHeight(&editor->terrain, next.x, next.z) + 0.035f;
+            DrawLine3D(last, next, YELLOW);
+            last = next;
+        }
+        return;
+    }
     if (editor->selected < 0) return;
     SceneObject selected = MakePrefabSceneObject(&editor->entries[editor->selected].instance);
     DrawBoundingBox(selected.bounds, LIME);
@@ -327,16 +479,23 @@ void DrawEditorOverlay(const SceneEditor *editor)
     const char *selection = editor->selected >= 0
         ? TextFormat("Object %d of %d", editor->selected + 1, editor->count)
         : TextFormat("%d objects  /  none selected", editor->count);
+    const char *const tools[] = { "Raise", "Lower", "Level", "Orbit" };
+    if (editor->terrainMode)
+        selection = TextFormat("%s  /  Radius %.2f", tools[editor->brush], editor->brushRadius);
     DrawText(selection, (int)panel.x + 10, 38, 14, LIGHTGRAY);
     InputPointer pointer = { .position = editor->pointer };
-    for (int i = 0; i < COMMAND_COUNT; ++i)
+    int buttons = EditorButtonCount(editor);
+    for (int i = 0; i < buttons; ++i)
     {
+        EditorCommand command = EditorButtonCommand(editor, i);
         Rectangle bounds = CommandBounds(panel, i);
-        bool enabled = CommandEnabled(editor, i);
-        DrawUiButton(bounds, labels[i], ReadUiButton(bounds, pointer, enabled), enabled);
+        bool enabled = CommandEnabled(editor, command);
+        const char *label = editor->terrainMode && command == TERRAIN_TAB ? "Objects" : labels[command];
+        DrawUiButton(bounds, label, ReadUiButton(bounds, pointer, enabled), enabled);
     }
-    int y = (int)(CommandBounds(panel, LARGER).y + CommandBounds(panel, LARGER).height + 8);
-    if (editor->selected >= 0)
+    Rectangle lastButton = CommandBounds(panel, buttons - 1);
+    int y = (int)(lastButton.y + lastButton.height + 8);
+    if (!editor->terrainMode && editor->selected >= 0)
     {
         PrefabInstance instance = editor->entries[editor->selected].instance;
         DrawText(TextFormat("X %.2f   Y %.2f   Z %.2f", instance.position.x, instance.position.y, instance.position.z),
@@ -345,6 +504,9 @@ void DrawEditorOverlay(const SceneEditor *editor)
                  (int)panel.x + 10, y + 17, 13, LIGHTGRAY);
     }
     if (editor->status)
-        DrawText(editor->status, (int)panel.x + 10, y + 34, 13, RAYWHITE);
-    DrawText("Tap to select / Drag to orbit", 12, GetScreenHeight() - 23, 14, RAYWHITE);
+        DrawText(editor->status, (int)panel.x + 10, y + (editor->terrainMode ? 0 : 34), 13, RAYWHITE);
+    const char *hint = editor->terrainMode
+        ? (editor->brush == TERRAIN_ORBIT ? "Drag to orbit" : "Hold and drag to sculpt")
+        : "Tap to select / Drag to orbit";
+    DrawText(hint, 12, GetScreenHeight() - 23, 14, RAYWHITE);
 }

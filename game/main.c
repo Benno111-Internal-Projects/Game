@@ -68,17 +68,30 @@ static void DrawEditorSphere(const void *context, Vector3 position, float radius
     DrawSphereEx(position, radius, 12, 16, SKYBLUE);
 }
 
-static void UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, float floorHeight)
+static float TerrainGround(const void *surface, float x, float z)
+{
+    return GetTerrainHeight(surface, x, z);
+}
+
+static Vector2 UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, const TerrainMap *terrain)
 {
     float x = ball.position.x;
     float z = ball.position.z;
-    float y = floorHeight + 0.012f;
     float radius = ball.radius;
     float vertices[] = {
-        x - radius, y, z,  x, y, z + radius,  x + radius, y, z,
-        x - radius, y, z,  x + radius, y, z,  x, y, z - radius,
+        x - radius, 0, z,  x, 0, z + radius,  x + radius, 0, z,
+        x - radius, 0, z,  x + radius, 0, z,  x, 0, z - radius,
     };
+    Vector2 limits = { INFINITY, -INFINITY };
+    for (int i = 0; i < 18; i += 3)
+    {
+        float height = GetTerrainHeight(terrain, vertices[i], vertices[i + 2]) + 0.012f;
+        vertices[i + 1] = height;
+        limits.x = fminf(limits.x, height);
+        limits.y = fmaxf(limits.y, height);
+    }
     UploadDynamicTriangles(buffer, vertices, sizeof(vertices) / (3 * sizeof(vertices[0])));
+    return limits;
 }
 
 static WalkCamera SpawnWalker(float orbitYaw, float floorHeight)
@@ -114,6 +127,7 @@ typedef struct StarterGame {
     float titleTime;
     Vector2 titlePointer;
     SceneObject ballObject;
+    Vector2 ballMarkerHeight;
     Rectangle dropBounds;
     UiButtonState drop;
     SceneMusic music;
@@ -254,10 +268,11 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
     if (game->editorOpen)
     {
-        if (actions[ACTION_EXIT].pressed || !UpdateSceneEditor(&game->editor, pointer))
+        if (actions[ACTION_EXIT].pressed || !UpdateSceneEditor(&game->editor, pointer, deltaTime))
         {
             game->editorOpen = false;
             game->editor.dragging = false;
+            game->editor.brushDown = false;
             game->titleOpen = true;
             game->titlePointer = pointer.position;
         }
@@ -296,25 +311,29 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (!pointer.down) game->pointerCaptured = false;
     if (game->drop.activated) game->pointerCaptured = true;
 
+    const TerrainMap *terrain = &game->editor.terrain;
     bool dropped = game->drop.activated || actions[ACTION_DROP].pressed;
     float impact = 0.0f;
     if (dropped)
     {
         game->ball = (PhysicsSphere){
-            .position = { 1.45f, game->floorHeight + 2.75f, -0.65f },
+            .position = { 1.45f, GetTerrainHeight(terrain, 1.45f, -0.65f) + 2.75f, -0.65f },
             .velocity = { 0.25f, 0.0f, 0.1f },
             .radius = 0.22f,
             .restitution = 0.66f,
         };
         game->ballInstance.enabled = true;
     }
+    float groundUnderBall = GetTerrainHeight(terrain, game->ball.position.x, game->ball.position.z);
+    if (game->ball.resting && fabsf(game->ball.position.y - groundUnderBall - game->ball.radius) > 0.001f)
+        game->ball.resting = false;
     if (game->ballInstance.enabled && !game->ball.resting)
     {
         float previousVelocity = game->ball.velocity.y;
-        StepPhysicsSphere(&game->ball, game->floorHeight, deltaTime);
+        StepPhysicsSphereOnSurface(&game->ball, TerrainGround, terrain, deltaTime);
         if (previousVelocity < -0.6f && game->ball.velocity.y >= 0.0f)
             impact = -previousVelocity;
-        UpdateBallMarker(&game->ballMarker, game->ball, game->floorHeight);
+        game->ballMarkerHeight = UpdateBallMarker(&game->ballMarker, game->ball, terrain);
     }
 
     if (game->ballInstance.enabled)
@@ -323,7 +342,8 @@ static bool UpdateStarter(void *state, float deltaTime)
         game->ballInstance.scale = game->ball.radius;
         game->ballObject = MakePrefabSceneObject(&game->ballInstance);
         // The attached dynamic marker remains at ground level.
-        game->ballObject.bounds.min.y = fminf(game->ballObject.bounds.min.y, game->floorHeight);
+        game->ballObject.bounds.min.y = fminf(game->ballObject.bounds.min.y, game->ballMarkerHeight.x);
+        game->ballObject.bounds.max.y = fmaxf(game->ballObject.bounds.max.y, game->ballMarkerHeight.y);
     }
     if (actions[ACTION_OCCLUSION].pressed) game->occlusionEnabled = !game->occlusionEnabled;
 
@@ -361,6 +381,9 @@ static bool UpdateStarter(void *state, float deltaTime)
             (float)(actions[ACTION_FORWARD].down - actions[ACTION_BACK].down),
         };
         UpdateWalkCamera(&game->camera, &game->walk, mouse, movement, 3.5f * fminf(deltaTime, 0.05f));
+        float eyeHeight = GetTerrainHeight(terrain, game->walk.position.x, game->walk.position.z) + 1.65f;
+        game->camera.target.y += eyeHeight - game->camera.position.y;
+        game->camera.position.y = game->walk.position.y = eyeHeight;
     }
     else
     {
@@ -440,7 +463,8 @@ static void DrawStarter(const void *state)
     Camera3D camera = game->editorOpen ? GetEditorCamera(&game->editor) : game->camera;
     BeginMode3D(camera);
     if (game->editorOpen || game->showSky) DrawSky(game->sky, camera.position);
-    if (game->editorOpen || game->grid)
+    if (game->editor.terrain.enabled) DrawTerrainMap(&game->editor.terrain);
+    else if (game->editorOpen || game->grid)
     {
         rlPushMatrix();
         rlTranslatef(0, game->floorHeight, 0);
@@ -485,6 +509,7 @@ static void DrawStarter(const void *state)
 static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
+    UnloadTerrainMap(&game->editor.terrain);
     UnloadSceneMusic(&game->music);
     DestroyAudioVoice(&game->dropVoice);
     DestroyAudioVoice(&game->bounceVoice);
