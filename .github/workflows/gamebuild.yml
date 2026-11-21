@@ -92,6 +92,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK tools
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
       - name: Set up Gradle
         if: matrix.platform == 'android'
         uses: gradle/actions/setup-gradle@v4
