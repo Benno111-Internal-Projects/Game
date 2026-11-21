@@ -14,6 +14,7 @@
 #include "title_screen.h"
 #include "window.h"
 #include "scene.h"
+#include "scene_editor.h"
 #include "scene_music.h"
 #include "render.h"
 #include "raylib.h"
@@ -44,11 +45,11 @@ typedef struct BallDrawData {
     Material markerMaterial;
 } BallDrawData;
 
-static void DrawSceneModel(const void *context, Vector3 position, float scale, size_t lod)
+static void DrawSceneModel(const void *context, Vector3 position, float scale, float yaw, size_t lod)
 {
     const Model *model = context;
     (void)lod;
-    DrawModel(*model, position, scale, WHITE);
+    DrawModelEx(*model, position, (Vector3){ 0, 1, 0 }, yaw, (Vector3){ scale, scale, scale }, WHITE);
 }
 
 static void DrawSceneBall(const void *context, Vector3 position, float radius, size_t lod)
@@ -58,6 +59,13 @@ static void DrawSceneBall(const void *context, Vector3 position, float radius, s
     static const int slices[] = { 16, 10, 6 };
     DrawDynamicTriangles(data->marker, data->markerMaterial, MatrixIdentity());
     DrawSphereEx(position, radius, rings[lod], slices[lod], ORANGE);
+}
+
+static void DrawEditorSphere(const void *context, Vector3 position, float radius, size_t lod)
+{
+    (void)context;
+    (void)lod;
+    DrawSphereEx(position, radius, 12, 16, SKYBLUE);
 }
 
 static void UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, float floorHeight)
@@ -99,12 +107,13 @@ typedef struct StarterGame {
     WalkCamera walk;
     PhysicsSphere ball;
     BallDrawData ballDraw;
-    ScenePrefab modelPrefab, ballPrefab;
-    PrefabInstance modelInstance, ballInstance, titleModel;
-    bool titleOpen;
+    ScenePrefab modelPrefab, ballPrefab, spherePrefab;
+    PrefabInstance ballInstance, titleModel;
+    bool titleOpen, editorOpen;
+    SceneEditor editor;
     float titleTime;
     Vector2 titlePointer;
-    SceneObject scene[2];
+    SceneObject ballObject;
     Rectangle dropBounds;
     UiButtonState drop;
     SceneMusic music;
@@ -184,7 +193,7 @@ static bool InitStarter(void *state)
     static const float ballLodDistances[] = { 7.5f, 11.0f };
     game->modelPrefab = (ScenePrefab){
         .localBounds = { Vector3Subtract(bounds.min, center), Vector3Subtract(bounds.max, center) },
-        .draw = DrawSceneModel, .data = &game->model,
+        .drawRotated = DrawSceneModel, .data = &game->model,
         .opaqueBox = !game->modelPath && !game->texturePath,
     };
     game->ballPrefab = (ScenePrefab){
@@ -193,12 +202,14 @@ static bool InitStarter(void *state)
         .lodDistanceCount = sizeof(ballLodDistances) / sizeof(ballLodDistances[0]),
         .draw = DrawSceneBall, .data = &game->ballDraw,
     };
-    game->modelInstance = (PrefabInstance){
-        .prefab = &game->modelPrefab, .scale = scale, .enabled = true,
+    game->titleModel = (PrefabInstance){
+        .prefab = &game->modelPrefab, .scale = scale * 1.16f, .enabled = true,
     };
-    game->titleModel = game->modelInstance;
-    game->titleModel.scale *= 1.16f;
-    game->scene[0] = MakePrefabSceneObject(&game->modelInstance);
+    game->spherePrefab = (ScenePrefab){
+        .localBounds = { { -1, -1, -1 }, { 1, 1, 1 } },
+        .draw = DrawEditorSphere,
+    };
+    InitSceneEditor(&game->editor, &game->modelPrefab, scale, &game->spherePrefab, game->floorHeight);
     game->ballInstance.prefab = &game->ballPrefab;
     game->titleOpen = true;
     InitAudioDevice();
@@ -241,6 +252,18 @@ static bool UpdateStarter(void *state, float deltaTime)
     InputPointer pointer = PollInput(gameKeys, actions, ACTION_COUNT);
     if (actions[ACTION_FULLSCREEN].pressed) ToggleGameFullscreen();
     if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+    if (game->editorOpen)
+    {
+        if (actions[ACTION_EXIT].pressed || !UpdateSceneEditor(&game->editor, pointer))
+        {
+            game->editorOpen = false;
+            game->editor.dragging = false;
+            game->titleOpen = true;
+            game->titlePointer = pointer.position;
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->titleOpen)
     {
         game->titleTime = fmodf(game->titleTime + deltaTime, 60.0f);
@@ -248,6 +271,14 @@ static bool UpdateStarter(void *state, float deltaTime)
         TitleAction action = ReadTitleScreen(pointer, StarterAudioAvailable(game));
         if (action == TITLE_QUIT || actions[ACTION_EXIT].pressed) return false;
         if (action == TITLE_AUDIO && !actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+        if (action == TITLE_EDITOR)
+        {
+            game->editorOpen = true;
+            game->titleOpen = false;
+            game->editor.pointer = pointer.position;
+            UpdateStarterAudio(game);
+            return true;
+        }
         if (action == TITLE_START || actions[ACTION_START].pressed)
         {
             game->titleOpen = false;
@@ -290,9 +321,9 @@ static bool UpdateStarter(void *state, float deltaTime)
     {
         game->ballInstance.position = game->ball.position;
         game->ballInstance.scale = game->ball.radius;
-        game->scene[1] = MakePrefabSceneObject(&game->ballInstance);
+        game->ballObject = MakePrefabSceneObject(&game->ballInstance);
         // The attached dynamic marker remains at ground level.
-        game->scene[1].bounds.min.y = fminf(game->scene[1].bounds.min.y, game->floorHeight);
+        game->ballObject.bounds.min.y = fminf(game->ballObject.bounds.min.y, game->floorHeight);
     }
     if (actions[ACTION_OCCLUSION].pressed) game->occlusionEnabled = !game->occlusionEnabled;
 
@@ -406,18 +437,28 @@ static void DrawStarter(const void *state)
         DrawStarterTitle(game);
         return;
     }
-    BeginMode3D(game->camera);
-    if (game->showSky) DrawSky(game->sky, game->camera.position);
-    if (game->grid)
+    Camera3D camera = game->editorOpen ? GetEditorCamera(&game->editor) : game->camera;
+    BeginMode3D(camera);
+    if (game->editorOpen || game->showSky) DrawSky(game->sky, camera.position);
+    if (game->editorOpen || game->grid)
     {
         rlPushMatrix();
         rlTranslatef(0, game->floorHeight, 0);
-        DrawGrid(20, 0.5f);
+        DrawGrid(game->editorOpen ? 40 : 20, 0.5f);
         rlPopMatrix();
     }
-    SceneStats stats = DrawScene(game->scene, sizeof(game->scene) / sizeof(game->scene[0]), game->camera,
-                                (float)rlGetCullDistanceNear(), game->occlusionEnabled);
+    SceneObject objects[EDITOR_MAX_OBJECTS + 1];
+    size_t count = GetEditedScene(&game->editor, objects);
+    if (!game->editorOpen && game->ballObject.enabled) objects[count++] = game->ballObject;
+    SceneStats stats = DrawScene(objects, count, camera, (float)rlGetCullDistanceNear(),
+                                !game->editorOpen && game->occlusionEnabled);
+    if (game->editorOpen) DrawEditorSelection(&game->editor);
     EndMode3D();
+    if (game->editorOpen)
+    {
+        DrawEditorOverlay(&game->editor);
+        return;
+    }
     DrawUiPanel((Rectangle){ 0, 0, (float)GetScreenWidth(), 70 }, (Color){ 15, 24, 35, 235 });
     DrawUiButton(game->dropBounds, "Drop ball [P]", game->drop, !game->walking);
     if (CanToggleGameFullscreen())

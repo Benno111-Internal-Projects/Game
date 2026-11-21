@@ -7,7 +7,7 @@ typedef struct TitleLayout {
     float x;
     float y;
     float scale;
-    Rectangle buttons[3];
+    Rectangle buttons[4];
     bool narrow;
 } TitleLayout;
 
@@ -21,8 +21,8 @@ static TitleLayout LayoutTitleScreen(void)
     };
     float buttonWidth = fminf(width - 36.0f, 292.0f * layout.scale);
     layout.x = layout.narrow ? (width - buttonWidth) / 2.0f : width * 0.085f;
-    layout.y = (height - 264.0f * layout.scale) / 2.0f;
-    for (int i = 0; i < 3; ++i)
+    layout.y = (height - 310.0f * layout.scale) / 2.0f;
+    for (int i = 0; i < 4; ++i)
     {
         layout.buttons[i] = (Rectangle){
             layout.x, layout.y + (104.0f + i * 54.0f) * layout.scale,
@@ -35,10 +35,10 @@ static TitleLayout LayoutTitleScreen(void)
 TitleAction ReadTitleScreen(InputPointer pointer, bool audioAvailable)
 {
     TitleLayout layout = LayoutTitleScreen();
-    const TitleAction actions[] = { TITLE_START, TITLE_AUDIO, TITLE_QUIT };
-    for (int i = 0; i < 3; ++i)
+    const TitleAction actions[] = { TITLE_START, TITLE_EDITOR, TITLE_AUDIO, TITLE_QUIT };
+    for (int i = 0; i < 4; ++i)
     {
-        if (ReadUiButton(layout.buttons[i], pointer, i != 1 || audioAvailable).activated) return actions[i];
+        if (ReadUiButton(layout.buttons[i], pointer, i != 2 || audioAvailable).activated) return actions[i];
     }
     return TITLE_NONE;
 }
@@ -63,15 +63,15 @@ void DrawTitleScreen(Vector2 pointer, bool muted, bool audioAvailable)
 
     const char *audioLabel = !audioAvailable ? "Audio unavailable"
                                              : (muted ? "Audio off [M]" : "Audio on [M]");
-    const char *labels[] = { "Start [Enter]", audioLabel, "Quit [Esc]" };
-    for (int i = 0; i < 3; ++i)
+    const char *labels[] = { "Start [Enter]", "Scene Editor", audioLabel, "Quit [Esc]" };
+    for (int i = 0; i < 4; ++i)
     {
         Rectangle button = layout.buttons[i];
-        bool hover = (i != 1 || audioAvailable) && CheckCollisionPointRec(pointer, button);
+        bool hover = (i != 2 || audioAvailable) && CheckCollisionPointRec(pointer, button);
         Color fill = i == 0 ? (hover ? (Color){ 226, 249, 185, 255 } : accent)
                              : (hover ? (Color){ 46, 71, 84, 255 } : (Color){ 23, 42, 54, 255 });
         Color ink = i == 0 ? (Color){ 16, 35, 25, 255 } : RAYWHITE;
-        if (i == 1 && !audioAvailable) ink = secondary;
+        if (i == 2 && !audioAvailable) ink = secondary;
         DrawRectangleRounded(button, 0.22f, 8, fill);
         int size = (int)(18.0f * layout.scale);
         DrawText(labels[i], (int)(button.x + 15.0f * layout.scale),

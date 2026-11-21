@@ -13,7 +13,10 @@ void DrawUiPanel(Rectangle bounds, Color background)
 
 void DrawUiButton(Rectangle bounds, const char *label, UiButtonState state, bool enabled)
 {
-    const int fontSize = 14;
+    int fontSize = 14;
+    while (fontSize > 8 && (MeasureText(label, fontSize) > bounds.width - 6.0f ||
+                            fontSize > bounds.height - 2.0f))
+        --fontSize;
     Color fill = state.hovered ? (Color){ 66, 104, 130, 255 } : (Color){ 38, 64, 84, 255 };
     Color text = enabled ? RAYWHITE : GRAY;
     DrawUiPanel(bounds, fill);

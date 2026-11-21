@@ -182,3 +182,21 @@ Build a Linux installer with
 `bash installers/build-linux.sh build benno111-engene-linux-setup.run`.
 The Windows workflow compiles `installers/windows.nsi` with NSIS using the
 desktop build directory, repository directory, and output filename.
+
+## Scene editor
+
+Open **Scene Editor** from the title screen. Use **Add model** or **Add sphere**
+to place up to 64 objects. Click or tap an object to select it, or cycle with
+**Previous** and **Next**. Move the selection along X, Y, or Z, rotate it around
+Y, change its uniform scale, or delete it. Drag the preview to orbit and use
+the zoom buttons or mouse wheel to zoom. **Menu** returns to the title screen.
+Choose **Start** to play the scene as edited.
+
+**Save** and **Load** use one versioned `edited-scene.benno` file. It lives in
+the app's private storage on Android and iOS, in
+`%LOCALAPPDATA%/benno111-engene` on Windows, or under
+`${XDG_DATA_HOME:-$HOME/.local/share}/benno111-engene` on Linux. A new session
+starts with the example scene. Use **Load** to restore a saved layout.
+
+Prefabs can opt into yaw rotation with `ScenePrefab.drawRotated`. The scene
+system updates their world bounds and skips using rotated boxes as occluders.
