@@ -5,6 +5,8 @@
 #endif
 #include "audio.h"
 #include "camera.h"
+#include "campaign.h"
+#include "campaign_content.h"
 #include "dynamic_buffer.h"
 #include "input.h"
 #include "game_logic.h"
@@ -126,7 +128,8 @@ typedef struct StarterGame {
     BallDrawData ballDraw;
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
     PrefabInstance ballInstance, titleModel;
-    bool titleOpen, editorOpen;
+    bool titleOpen, editorOpen, campaignOpen, debugOpen;
+    Campaign campaign;
     SceneEditor editor;
     float titleTime;
     Vector2 titlePointer;
@@ -155,6 +158,7 @@ static bool InitStarter(void *state)
         snprintf(shadersDir, sizeof(shadersDir), "%sshaders/", appDir) >= (int)sizeof(shadersDir))
         return false;
 #endif
+    if (!LoadCampaignLevels(TextFormat("%slevels", assetsDir))) return false;
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
     if (!IsModelValid(game->model) || game->model.meshes[0].vertexCount == 0) return false;
@@ -319,6 +323,39 @@ static void DrawPlayerAvatar(const PlayerController *player)
     DrawCapsule(bottom, top, player->radius, 10, 5, (Color){ 187, 224, 153, 255 });
 }
 
+static void OpenCampaign(StarterGame *game, int level, bool debug)
+{
+    StartCampaign(&game->campaign, level, debug);
+    game->campaignOpen = true;
+    game->titleOpen = game->debugOpen = false;
+    if (!HasPlayerTouchControls()) DisableCursor();
+}
+
+static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
+                               InputPointer pointer, float deltaTime)
+{
+    Campaign *campaign = &game->campaign;
+    bool touch = HasPlayerTouchControls();
+    if (actions[ACTION_EXIT].pressed || (touch && ReadCampaignMenu(pointer)) ||
+        (campaign->cleared && actions[ACTION_START].pressed))
+    {
+        game->campaignOpen = false;
+        game->debugOpen = campaign->debugRun;
+        game->titleOpen = !game->debugOpen;
+        if (!touch) EnableCursor();
+        return;
+    }
+    PlayerTouchInput touchInput = ReadPlayerTouch(&campaign->touch);
+    Vector2 movement = {
+        (float)(actions[ACTION_RIGHT].down - actions[ACTION_LEFT].down),
+        (float)(actions[ACTION_FORWARD].down - actions[ACTION_BACK].down),
+    };
+    StepCampaign(campaign, Vector2Add(movement, touchInput.movement),
+                 touch ? touchInput.look : pointer.delta,
+                 actions[ACTION_SPACE].pressed || touchInput.jumpPressed,
+                 actions[ACTION_SPRINT].down, actions[ACTION_RESET].pressed, deltaTime);
+}
+
 static bool UpdateStarter(void *state, float deltaTime)
 {
     StarterGame *game = state;
@@ -326,6 +363,26 @@ static bool UpdateStarter(void *state, float deltaTime)
     InputPointer pointer = PollInput(gameKeys, actions, ACTION_COUNT);
     if (actions[ACTION_FULLSCREEN].pressed) ToggleGameFullscreen();
     if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+    if (game->campaignOpen)
+    {
+        game->titlePointer = pointer.position;
+        UpdateCampaignMode(game, actions, pointer, deltaTime);
+        UpdateStarterAudio(game);
+        return true;
+    }
+    if (game->debugOpen)
+    {
+        game->titlePointer = pointer.position;
+        int level = ReadDebugLevelSelect(pointer);
+        if (actions[ACTION_EXIT].pressed || level == CAMPAIGN_LEVEL_COUNT)
+        {
+            game->debugOpen = false;
+            game->titleOpen = true;
+        }
+        else if (level >= 0) OpenCampaign(game, level, true);
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->editorOpen)
     {
         if (actions[ACTION_EXIT].pressed || !UpdateSceneEditor(&game->editor, pointer, deltaTime))
@@ -355,7 +412,20 @@ static bool UpdateStarter(void *state, float deltaTime)
             UpdateStarterAudio(game);
             return true;
         }
+        if (action == TITLE_DEBUG)
+        {
+            game->titleOpen = false;
+            game->debugOpen = true;
+            UpdateStarterAudio(game);
+            return true;
+        }
         if (action == TITLE_START || actions[ACTION_START].pressed)
+        {
+            OpenCampaign(game, 0, false);
+            UpdateStarterAudio(game);
+            return true;
+        }
+        if (action == TITLE_SANDBOX)
         {
             game->titleOpen = false;
             game->pointerCaptured = pointer.down;
@@ -528,6 +598,20 @@ static void DrawStarter(const void *state)
 {
     const StarterGame *game = state;
     ClearBackground((Color){ 29, 42, 54, 255 });
+    if (game->campaignOpen)
+    {
+        BeginMode3D(game->campaign.camera);
+        DrawSky(game->sky, game->campaign.camera.position);
+        DrawCampaignWorld(&game->campaign);
+        EndMode3D();
+        DrawCampaignHud(&game->campaign, (InputPointer){ .position = game->titlePointer });
+        return;
+    }
+    if (game->debugOpen)
+    {
+        DrawDebugLevelSelect(game->titlePointer);
+        return;
+    }
     if (game->titleOpen)
     {
         DrawStarterTitle(game);
@@ -630,9 +714,22 @@ static void ShutdownStarter(void *state)
 
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--check-levels") == 0)
+    {
+        if (argc > 3)
+        {
+            fputs("Usage: benno111-engene --check-levels [directory]\n", stderr);
+            return EXIT_FAILURE;
+        }
+        const char *directory = argc == 3 ? argv[2] : TextFormat("%sassets/levels", GetApplicationDirectory());
+        if (!LoadCampaignLevels(directory)) return EXIT_FAILURE;
+        printf("Validated %d levels and %d boss assignments.\n", CAMPAIGN_LEVEL_COUNT, CAMPAIGN_BOSS_COUNT);
+        return EXIT_SUCCESS;
+    }
     if (argc > 4 || (argc > 1 && strcmp(argv[1], "--help") == 0))
     {
         puts("Usage: benno111-engene [model] [diffuse-texture|-] [skybox-strip|-]");
+        puts("       benno111-engene --check-levels [directory]");
         return argc > 4 ? EXIT_FAILURE : EXIT_SUCCESS;
     }
     // Use working-directory paths for user assets and executable-relative paths for bundled assets.
@@ -661,7 +758,7 @@ int main(int argc, char **argv)
         .shutdown = ShutdownStarter,
     };
     bool success = RunGameLoop(logic, &game);
-    if (!success) TraceLog(LOG_ERROR, "Could not initialize model, texture, or shaders");
+    if (!success) TraceLog(LOG_ERROR, "Could not initialize campaign levels or game assets");
     CloseWindow();
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

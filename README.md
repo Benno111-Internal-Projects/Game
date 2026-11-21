@@ -1,9 +1,9 @@
-# benno111 engene
+# Dorfplatformer 10
 
-A native C99 demo for Windows, macOS, and Linux. raylib opens the window, loads the meshes and textures, and submits draws. The project has two parts:
+A first-person 3D platformer built on benno111 engene and raylib.
 
 - `framework/` builds the reusable `render-framework` library. It contains skybox rendering, imported texture cleanup, first-person camera math, and the GLSL shaders.
-- `game/` builds the `benno111-engene` executable. It contains the scene, render loop, key bindings, movement speed, and sample assets.
+- `game/` builds the `benno111-engene` executable. It contains the Dorfplatformer campaign, title screen, sandbox, and scene editor.
 
 Set `GAME_WINDOW_TITLE` in `game/game.h` to change the window title and in-game header, then rebuild.
 
@@ -22,7 +22,60 @@ With a multi-config generator, look for the executable and its asset folders in 
 On desktop, **F11** switches between borderless fullscreen and the previous window
 size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
-## Player controls
+## Campaign
+
+Choose **Start Campaign** to play through seven levels and nine bosses. Jump
+across the gaps to reach each arena. Land on a boss from above to damage it,
+jump over its attacks, and enter the gate after defeating the arena's bosses.
+Reaching an arena sets a checkpoint. Falling or losing all three health
+points restarts from the latest checkpoint. Campaign progress resets when
+starting a new run.
+
+| Level | Bosses |
+| --- | --- |
+| Meadow Gate | Moss Bell |
+| Brook Crossing | Brook Lantern |
+| Quarry Steps | Copper Maw |
+| Windmill Ridge | Ridge Spinner, Gale Warden |
+| Lantern Marsh | Amber Tide |
+| Frost Terrace | Glacier Eye |
+| Crown Keep | Cinder Regent, The Hollow Crown |
+
+On desktop, use **WASD**, mouse look, **Space** to jump, **Left Shift** to
+sprint, **R** to retry, and **Esc** to return. Mobile has an on-screen stick,
+swipe-to-look, Jump, and a menu button.
+
+**Debug Level Select** opens any stage directly. Click or tap its name, or
+press **1–7** on a keyboard. Debug runs return to the picker after the stage
+ends. Level layouts are in `game/assets/levels/`. Boss behavior is in `game/campaign_content.c`.
+Choose **Sandbox** to play the editable scene.
+
+### Ship a level update
+
+Edit `game/assets/levels/01.level` through `07.level` in GitHub and open a pull
+request. Each file uses the `DORF-LEVEL 1` format. The fields below show the
+order and units.
+
+| Field | Values |
+| --- | --- |
+| `name` | The level name shown in the HUD and debug selector |
+| `stone`, `trim` | Three RGB integers from 0 to 255 |
+| `start` | Spawn X and Z on the first platform |
+| `bosses` | First boss ID (1–9) and number of consecutive bosses (1–2) |
+| `platform` | Center X, center Z, width, depth, and top Y, in world units |
+
+List the starting platform first and the boss arena last. The arena must be
+at least 8 × 8 world units. Assign each of the nine boss IDs once across the
+pack. Play-test changed gaps and platform heights through **Debug Level Select**.
+
+Run `./build/benno111-engene --check-levels game/assets/levels` to validate the
+pack without opening a window. GitHub Actions validates the bundled pack on
+Linux and Windows, checks that all seven files are in the mobile packages,
+and uploads a separate **dorfplatformer-level-pack** artifact. To update an
+existing desktop build, replace its seven files under `assets/levels/` and
+restart. Mobile builds receive the files in the next app package.
+
+## Sandbox controls
 
 Press **F** from orbit to take control of the player. Move with **WASD**, look
 with the mouse, press **Space** to jump, and hold **Left Shift** to sprint.
@@ -161,8 +214,8 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Title screen and prefabs
 
-The demo opens on a title screen with a live scene preview. Click **Start** or
-press **Enter** to enter the demo. **Esc** leaves first-person mode, returns
+The title screen includes a live scene preview. Choose **Sandbox** to enter
+the demo. **Esc** leaves first-person mode, returns
 from orbit to the title screen, and quits from the title screen. **M** or the
 title screen's audio button toggles music and effects.
 
@@ -201,7 +254,7 @@ to place up to 64 objects. Click or tap an object to select it, or cycle with
 **Previous** and **Next**. Move the selection along X, Y, or Z, rotate it around
 Y, change its uniform scale, or delete it. Drag the preview to orbit and use
 the zoom buttons or mouse wheel to zoom. **Menu** returns to the title screen.
-Choose **Start** to play the scene as edited.
+Choose **Sandbox** to play the scene as edited.
 
 **Save** and **Load** use one versioned `edited-scene.benno` file. It lives in
 the app's private storage on Android and iOS, in

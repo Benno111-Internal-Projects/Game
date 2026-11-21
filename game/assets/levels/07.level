@@ -1,0 +1,13 @@
+DORF-LEVEL 1
+name Crown Keep
+stone 111 66 88
+trim 251 182 133
+start 0 4
+bosses 8 2
+platform 0 3 8 8 0
+platform 0 -4.7 4.5 4.2 0.65
+platform -2.3 -10.4 4.8 4.4 1.25
+platform -2.5 -16 4.3 4 1.9
+platform 0.5 -21.5 4.6 4 2.45
+platform 3 -27 4.5 4 3
+platform 2.5 -37 14 13 3.6

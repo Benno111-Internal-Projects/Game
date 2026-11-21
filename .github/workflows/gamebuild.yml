@@ -39,7 +39,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_WAYLAND=OFF
           cmake --build build --parallel
-          ./build/benno111-engene --help
+          ./build/benno111-engene --check-levels
           tar -czf benno111-engene-linux.tar.gz -C build benno111-engene assets shaders
 
       - name: Build Windows
@@ -47,7 +47,7 @@ jobs:
         run: |
           cmake -S . -B build -A x64
           cmake --build build --config Release --parallel
-          ./build/Release/benno111-engene.exe --help
+          ./build/Release/benno111-engene.exe --check-levels
 
       - name: Package and test Linux installer
         if: matrix.platform == 'linux'
@@ -117,6 +117,7 @@ jobs:
           grep -Fx 'assets/model.vert' apk-files.txt
           grep -Fx 'assets/sample.obj' apk-files.txt
           grep -Fx 'assets/starter-ambient.ogg' apk-files.txt
+          for level in {01..07}; do grep -Fx "assets/levels/$level.level" apk-files.txt; done
 
       - name: Build unsigned iOS device app and package IPA
         if: matrix.platform == 'ios'
@@ -130,6 +131,7 @@ jobs:
           test -n "$app"
           test -f "$app/assets/sample.obj"
           test -f "$app/shaders/model.vert"
+          for level in {01..07}; do test -f "$app/assets/levels/$level.level"; done
           mkdir -p ios-package/Payload
           cp -R "$app" ios-package/Payload/
           (cd ios-package && zip -qry ../benno111-engene-ios.ipa Payload)
@@ -143,6 +145,14 @@ jobs:
         with:
           name: benno111-engene-linux
           path: benno111-engene-linux.tar.gz
+          if-no-files-found: error
+
+      - name: Upload campaign level pack
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dorfplatformer-level-pack
+          path: game/assets/levels/*.level
           if-no-files-found: error
 
       - name: Upload Windows build

@@ -1,0 +1,11 @@
+DORF-LEVEL 1
+name Windmill Ridge
+stone 91 85 123
+trim 212 178 253
+start 0 4
+bosses 4 2
+platform 0 3 8 8 0
+platform -2 -4.4 4.2 3.8 0.5
+platform 1.7 -10 4.4 4 1
+platform 3.5 -15 4 3.6 1.35
+platform 2 -24 13 12 1.6

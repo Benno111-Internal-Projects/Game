@@ -6,6 +6,8 @@
 typedef enum TitleAction {
     TITLE_NONE,
     TITLE_START,
+    TITLE_DEBUG,
+    TITLE_SANDBOX,
     TITLE_EDITOR,
     TITLE_AUDIO,
     TITLE_QUIT

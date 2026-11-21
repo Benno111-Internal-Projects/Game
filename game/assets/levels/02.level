@@ -1,0 +1,10 @@
+DORF-LEVEL 1
+name Brook Crossing
+stone 63 111 133
+trim 133 226 235
+start 0 4
+bosses 2 1
+platform 0 3 7 8 0
+platform 2 -4 4 3.8 0.5
+platform -0.5 -9 4.5 3.8 0.8
+platform -0.5 -18 11 11 1.2
