@@ -42,6 +42,11 @@ static void FillVertices(TerrainMap *map)
             map->mesh.vertices[i * 3 + 1] = point.y;
             map->mesh.vertices[i * 3 + 2] = point.z;
 
+            // Raylib's non-VAO mesh path always binds a primary UV buffer.
+            // Store world X/Z so layered texture coordinates join across chunks.
+            map->mesh.texcoords[i * 2] = point.x;
+            map->mesh.texcoords[i * 2 + 1] = point.z;
+
             Vector3 dx = Vector3Subtract(NeighborPoint(map, x + 1, z), NeighborPoint(map, x - 1, z));
             Vector3 dz = Vector3Subtract(NeighborPoint(map, x, z + 1), NeighborPoint(map, x, z - 1));
             Vector3 normal = Vector3Normalize(Vector3CrossProduct(dz, dx));
@@ -72,10 +77,11 @@ static bool InitMesh(TerrainMap *map, bool dynamic)
     mesh->vertexCount = TERRAIN_SAMPLES;
     mesh->triangleCount = cells * cells * 2;
     mesh->vertices = MemAlloc(TERRAIN_SAMPLES * 3 * sizeof(float));
+    mesh->texcoords = MemAlloc(TERRAIN_SAMPLES * 2 * sizeof(float));
     mesh->normals = MemAlloc(TERRAIN_SAMPLES * 3 * sizeof(float));
     mesh->colors = MemAlloc(TERRAIN_SAMPLES * 4);
     mesh->indices = MemAlloc((unsigned int)mesh->triangleCount * 3 * sizeof(unsigned short));
-    if (!mesh->vertices || !mesh->normals || !mesh->colors || !mesh->indices)
+    if (!mesh->vertices || !mesh->texcoords || !mesh->normals || !mesh->colors || !mesh->indices)
     {
         UnloadTerrainMap(map);
         return false;
@@ -98,7 +104,7 @@ static bool InitMesh(TerrainMap *map, bool dynamic)
     }
     UploadMesh(mesh, dynamic);
     map->material = LoadMaterialDefault();
-    if (!mesh->vboId || !mesh->vboId[0] || !mesh->vboId[2] || !mesh->vboId[3] || !mesh->vboId[6] || !map->material.maps)
+    if (!mesh->vboId || !mesh->vboId[0] || !mesh->vboId[1] || !mesh->vboId[2] || !mesh->vboId[3] || !mesh->vboId[6] || !map->material.maps)
     {
         UnloadTerrainMap(map);
         return false;

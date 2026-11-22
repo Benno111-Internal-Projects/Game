@@ -86,6 +86,9 @@ Model LoadSkybox(const char *path, Shader shader)
 
     Model sky = LoadModelFromMesh(GenMeshCube(40, 40, 40));
     shader.locs[SHADER_LOC_MAP_CUBEMAP] = GetShaderLocation(shader, "skybox");
+    // DrawMesh binds the cube UVs even when they are unused on the non-VAO path.
+    if (shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] < 0)
+        shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD;
     sky.materials[0].shader = shader;
     SetMaterialTexture(&sky.materials[0], MATERIAL_MAP_CUBEMAP, cubemap);
     return sky;

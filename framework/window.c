@@ -37,6 +37,14 @@ void PrepareWindowFrame(void)
         glBindRenderbuffer(GL_RENDERBUFFER, info.info.uikit.colorbuffer);
     }
 #endif
+    if (rlGetVersion() == RL_OPENGL_ES_20)
+    {
+        // Raylib 5.5 binds the default batch's normal stream even when
+        // its shader omits that attribute and no VAO is available.
+        int *locations = rlGetShaderLocsDefault();
+        if (locations[SHADER_LOC_VERTEX_NORMAL] < 0)
+            locations[SHADER_LOC_VERTEX_NORMAL] = RL_DEFAULT_SHADER_ATTRIB_LOCATION_NORMAL;
+    }
     // A depth clear honors the write mask and scissor left by the previous pass.
     rlEnableDepthMask();
     rlDisableScissorTest();
