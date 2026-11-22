@@ -2,6 +2,7 @@
 
 #if defined(BENNO_IOS)
 #include <SDL_main.h>
+#include "ios_audio.h"
 #endif
 #include "audio.h"
 #include "camera.h"
@@ -249,6 +250,9 @@ static bool InitStarter(void *state)
     game->audioReady = IsAudioDeviceReady();
     if (game->audioReady)
     {
+#if defined(BENNO_IOS)
+        ConfigureIosGameAudio();
+#endif
         game->ballSound = LoadSound(TextFormat("%sball-tap.wav", assetsDir));
         const SceneMusicSettings sceneMusic = {
             .path = TextFormat("%sstarter-ambient.ogg", assetsDir),
