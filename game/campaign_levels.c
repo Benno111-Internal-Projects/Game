@@ -57,25 +57,120 @@ static bool ReadColor(char **cursor, const char *field, Color *color)
     return true;
 }
 
+Vector2 CampaignMazeCellCenter(const LevelSpec *level, int row, int col)
+{
+    return (Vector2){ (col + 0.5f - level->mazeCols * 0.5f) * CAMPAIGN_MAZE_CELL,
+                      (row + 0.5f - level->mazeRows) * CAMPAIGN_MAZE_CELL };
+}
+
+static bool MazeIsConnected(const LevelSpec *level, int start)
+{
+    bool visited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { 0 };
+    int queue[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { start };
+    int tail = 1;
+    visited[start] = true;
+    const int dx[] = { 1, -1, 0, 0 }, dz[] = { 0, 0, 1, -1 };
+    for (int head = 0; head < tail; ++head)
+    {
+        int col = queue[head] % level->mazeCols, row = queue[head] / level->mazeCols;
+        for (int i = 0; i < 4; ++i)
+        {
+            int x = col + dx[i], z = row + dz[i];
+            if (x < 0 || x >= level->mazeCols || z < 0 || z >= level->mazeRows) continue;
+            int cell = z * level->mazeCols + x;
+            if (level->maze[cell] == '#' || visited[cell]) continue;
+            visited[cell] = true;
+            queue[tail++] = cell;
+        }
+    }
+    for (int i = 0; i < level->mazeRows * level->mazeCols; ++i)
+        if (level->maze[i] != '#' && !visited[i]) return false;
+    return true;
+}
+
+static bool ReadMaze(char *cursor, LevelSpec *level)
+{
+    float size[2];
+    if (!ReadNumbers(ReadField(&cursor, "maze"), size, 2) ||
+        size[0] < 7 || size[0] > CAMPAIGN_MAZE_SIDE || floorf(size[0]) != size[0] ||
+        size[1] < 7 || size[1] > CAMPAIGN_MAZE_SIDE || floorf(size[1]) != size[1]) return false;
+    level->mazeRows = (int)size[0];
+    level->mazeCols = (int)size[1];
+    level->mazeExit = -1;
+    int spawn = -1;
+    for (int row = 0; row < level->mazeRows; ++row)
+    {
+        const char *line = NextLine(&cursor);
+        if (!line || strlen(line) != (size_t)level->mazeCols) return false;
+        for (int col = 0; col < level->mazeCols; ++col)
+        {
+            char tile = line[col];
+            bool border = row == 0 || col == 0 || row == level->mazeRows - 1 || col == level->mazeCols - 1;
+            int cell = row * level->mazeCols + col;
+            if (tile == 'S' && !border && spawn < 0) spawn = cell;
+            else if (tile == 'E' && row == 0 && col > 0 && col < level->mazeCols - 1 && level->mazeExit < 0)
+                level->mazeExit = col;
+            else if (tile != '#' && (tile != '.' || border)) return false;
+            level->maze[cell] = tile;
+        }
+    }
+    if (*cursor || spawn < 0 || level->mazeExit < 0 || !MazeIsConnected(level, spawn)) return false;
+
+    float halfWidth = level->mazeCols * CAMPAIGN_MAZE_CELL * 0.5f;
+    float north = -level->mazeRows * CAMPAIGN_MAZE_CELL;
+    float exitX = CampaignMazeCellCenter(level, 0, level->mazeExit).x;
+    level->start = CampaignMazeCellCenter(level, spawn / level->mazeCols, spawn % level->mazeCols);
+    level->platformCount = level->colliderCount = 2;
+    level->platforms[0] = (BoundingBox){ { -halfWidth, -0.8f, north }, { halfWidth, 0, 0 } };
+    level->platforms[1] = (BoundingBox){ { exitX - 7, -0.8f, north - 15 }, { exitX + 7, 0, north } };
+    memcpy(level->colliders, level->platforms, 2 * sizeof(level->platforms[0]));
+
+    // Merge horizontal wall tiles into strips for rendering and player collision.
+    for (int row = 0; row < level->mazeRows; ++row)
+    {
+        int col = 0;
+        while (col < level->mazeCols)
+        {
+            if (level->maze[row * level->mazeCols + col] != '#')
+            {
+                ++col;
+                continue;
+            }
+            int first = col;
+            do { ++col; }
+            while (col < level->mazeCols && level->maze[row * level->mazeCols + col] == '#');
+            float z = north + row * CAMPAIGN_MAZE_CELL;
+            level->colliders[level->colliderCount++] = (BoundingBox){
+                { first * CAMPAIGN_MAZE_CELL - halfWidth, 0, z },
+                { col * CAMPAIGN_MAZE_CELL - halfWidth, 3.6f, z + CAMPAIGN_MAZE_CELL },
+            };
+        }
+    }
+    return true;
+}
+
 static bool ReadLevel(char *cursor, LevelSpec *level)
 {
     const char *header = NextLine(&cursor);
-    if (!header || strcmp(header, "DORF-LEVEL 1") != 0) return false;
+    if (!header) return false;
+    bool maze = strcmp(header, "DORF-LEVEL 2") == 0;
+    if (!maze && strcmp(header, "DORF-LEVEL 1") != 0) return false;
     const char *name = ReadField(&cursor, "name");
     if (!name || !*name || strlen(name) >= sizeof(level->name)) return false;
     memcpy(level->name, name, strlen(name) + 1);
 
     float start[2], bosses[2];
     if (!ReadColor(&cursor, "stone", &level->stone) || !ReadColor(&cursor, "trim", &level->trim) ||
-        !ReadNumbers(ReadField(&cursor, "start"), start, 2) ||
+        (!maze && !ReadNumbers(ReadField(&cursor, "start"), start, 2)) ||
         !ReadNumbers(ReadField(&cursor, "bosses"), bosses, 2) ||
         bosses[0] < 1 || bosses[0] > CAMPAIGN_BOSS_COUNT || floorf(bosses[0]) != bosses[0] ||
         bosses[1] < 1 || bosses[1] > 2 || floorf(bosses[1]) != bosses[1] ||
         bosses[0] + bosses[1] - 1 > CAMPAIGN_BOSS_COUNT) return false;
 
-    level->start = (Vector2){ start[0], start[1] };
     level->firstBoss = (int)bosses[0] - 1;
     level->bossCount = (int)bosses[1];
+    if (maze) return ReadMaze(cursor, level);
+    level->start = (Vector2){ start[0], start[1] };
 
     while (*cursor)
     {
@@ -92,6 +187,8 @@ static bool ReadLevel(char *cursor, LevelSpec *level)
     }
 
     if (level->platformCount < 2) return false;
+    level->colliderCount = level->platformCount;
+    memcpy(level->colliders, level->platforms, (size_t)level->platformCount * sizeof(level->platforms[0]));
     BoundingBox first = level->platforms[0];
     BoundingBox arena = level->platforms[level->platformCount - 1];
     return start[0] >= first.min.x + 0.3f && start[0] <= first.max.x - 0.3f &&

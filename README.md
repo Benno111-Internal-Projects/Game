@@ -24,12 +24,14 @@ size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
 ## Campaign
 
-Choose **Start Campaign** to play through seven levels and nine bosses. Jump
-across the gaps to reach each arena. Land on a boss from above to damage it,
+Choose **Start Campaign** to play through seven levels and nine bosses. Explore a
+maze before each arena. The minimap shows explored passages and the exit. Land
+on a boss from above to damage it,
 jump over its attacks, and enter the gate after defeating the arena's bosses.
 Reaching an arena sets a checkpoint. Falling or losing all three health
 points restarts from the latest checkpoint. Campaign progress resets when
-starting a new run.
+starting a new run. Eight bosses change their movement and attacks as they take
+damage. The Hollow Crown has three phases.
 
 | Level | Bosses |
 | --- | --- |
@@ -53,20 +55,21 @@ Choose **Sandbox** to play the editable scene.
 ### Ship a level update
 
 Edit `game/assets/levels/01.level` through `07.level` in GitHub and open a pull
-request. Each file uses the `DORF-LEVEL 1` format. The fields below show the
-order and units.
+request. The bundled levels use `DORF-LEVEL 2` followed by these fields in order.
 
 | Field | Values |
 | --- | --- |
 | `name` | The level name shown in the HUD and debug selector |
 | `stone`, `trim` | Three RGB integers from 0 to 255 |
-| `start` | Spawn X and Z on the first platform |
 | `bosses` | First boss ID (1–9) and number of consecutive bosses (1–2) |
-| `platform` | Center X, center Z, width, depth, and top Y, in world units |
+| `maze` | Row count and column count, each from 7 to 31, followed by the grid |
 
-List the starting platform first and the boss arena last. The arena must be
-at least 8 × 8 world units. Assign each of the nine boss IDs once across the
-pack. Play-test changed gaps and platform heights through **Debug Level Select**.
+Use `#` for walls, `.` for passages, `S` for one interior spawn, and `E` for one
+exit on the top edge outside the corners. Each passage must connect to the
+spawn, and the rest of the boundary must be walls. Each tile spans 2.5 world
+units. The arena attaches to the exit automatically. Assign each of the nine
+boss IDs once across the pack. Use **Debug Level Select** to play-test changes.
+The game also loads legacy `DORF-LEVEL 1` platform layouts.
 
 Run `./build/benno111-engene --check-levels game/assets/levels` to validate the
 pack without opening a window. GitHub Actions validates the bundled pack on

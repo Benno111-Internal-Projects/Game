@@ -24,6 +24,26 @@ static const BossSpec *CurrentBoss(const Campaign *campaign)
         ? &campaignBosses[level->firstBoss + campaign->bossIndex] : NULL;
 }
 
+static const BossPhase *CurrentPhase(const Campaign *campaign, const BossSpec *boss)
+{
+    return &boss->phases[campaign->bossPhase];
+}
+
+static int MazeCellAt(const LevelSpec *level, Vector3 position)
+{
+    if (level->mazeRows == 0) return -1;
+    int row = (int)floorf(position.z / CAMPAIGN_MAZE_CELL + level->mazeRows);
+    int col = (int)floorf(position.x / CAMPAIGN_MAZE_CELL + level->mazeCols * 0.5f);
+    if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return -1;
+    return row * level->mazeCols + col;
+}
+
+static void TrackMazePosition(Campaign *campaign)
+{
+    int cell = MazeCellAt(CurrentLevel(campaign), campaign->player.feet);
+    if (cell >= 0 && CurrentLevel(campaign)->maze[cell] != '#') campaign->mazeVisited[cell] = true;
+}
+
 static float VoidHeight(const void *data, float x, float z)
 {
     (void)data;
@@ -49,11 +69,15 @@ static void UpdateBossPosition(Campaign *campaign)
     const BossSpec *boss = CurrentBoss(campaign);
     if (!boss) return;
     BoundingBox arena = Arena(campaign);
-    float phase = campaign->time * boss->speed;
+    const BossPhase *phase = CurrentPhase(campaign, boss);
+    float range = phase->range;
+    if (campaign->bossPhase > 0 && campaign->phaseNotice > 0.7f)
+        range = Lerp(boss->phases[campaign->bossPhase - 1].range, range,
+                     Clamp((1.3f - campaign->phaseNotice) / 0.6f, 0.f, 1.f));
     campaign->bossPosition = (Vector3){
-        (arena.min.x + arena.max.x) * 0.5f + sinf(phase) * boss->range,
+        (arena.min.x + arena.max.x) * 0.5f + sinf(campaign->bossMotion) * range,
         arena.max.y,
-        (arena.min.z + arena.max.z) * 0.5f + (cosf(phase) - 1.0f) * (boss->range * 0.35f),
+        (arena.min.z + arena.max.z) * 0.5f + (cosf(campaign->bossMotion) - 1.0f) * (range * 0.35f),
     };
 }
 
@@ -61,7 +85,10 @@ static void ResetEncounter(Campaign *campaign)
 {
     const BossSpec *boss = CurrentBoss(campaign);
     campaign->bossHealth = boss ? boss->health : 0;
-    campaign->attackTimer = boss ? boss->cooldown : 0;
+    campaign->bossPhase = 0;
+    campaign->bossMotion = 0;
+    campaign->phaseNotice = 0;
+    campaign->attackTimer = boss ? boss->phases[0].cooldown : 0;
     campaign->guardTimer = 0;
     campaign->attackCount = 0;
     memset(campaign->orbs, 0, sizeof(campaign->orbs));
@@ -72,7 +99,7 @@ static PlayerWorld CampaignWorld(const Campaign *campaign)
 {
     const LevelSpec *level = CurrentLevel(campaign);
     return (PlayerWorld){
-        .groundHeight = VoidHeight, .boxes = level->platforms, .boxCount = (size_t)level->platformCount,
+        .groundHeight = VoidHeight, .boxes = level->colliders, .boxCount = (size_t)level->colliderCount,
     };
 }
 
@@ -92,6 +119,7 @@ static void Respawn(Campaign *campaign)
     campaign->health = 3;
     campaign->hitTimer = 0.65f;
     ResetEncounter(campaign);
+    TrackMazePosition(campaign);
     UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
 }
 
@@ -123,12 +151,28 @@ static void BossAttackNow(Campaign *campaign, const BossSpec *boss)
     start.y += 0.48f;
     Vector3 toward = Vector3Subtract(campaign->player.feet, start);
     float aim = atan2f(toward.z, toward.x);
-    BossAttack attack = boss->attacks[campaign->attackCount % 2];
+    BossAttack attack = CurrentPhase(campaign, boss)->attacks[campaign->attackCount % 2];
     if (attack == BOSS_AIMED)
         SpawnOrb(campaign, start, aim, 5.1f);
-    else if (attack == BOSS_FAN)
+    else if (attack == BOSS_FAN || attack == BOSS_SWEEP)
     {
-        for (int i = -2; i <= 2; ++i) SpawnOrb(campaign, start, aim + i * 0.25f, 4.5f);
+        int spread = attack == BOSS_SWEEP ? 3 : 2;
+        for (int i = -spread; i <= spread; ++i)
+        {
+            float height = start.y;
+            if (attack == BOSS_SWEEP && i % 2 != 0) height += 0.62f;
+            Vector3 origin = { start.x, height, start.z };
+            SpawnOrb(campaign, origin, aim + i * 0.25f, attack == BOSS_SWEEP ? 5.1f : 4.5f);
+        }
+    }
+    else if (attack == BOSS_CROSS)
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            float angle = aim + i * (PI * 0.5f);
+            SpawnOrb(campaign, start, angle, 5.3f);
+            SpawnOrb(campaign, start, angle + PI * 0.25f, 3.3f);
+        }
     }
     else
     {
@@ -160,13 +204,16 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
 {
     const BossSpec *boss = CurrentBoss(campaign);
     if (!boss || !campaign->checkpoint) return;
+    const BossPhase *phase = CurrentPhase(campaign, boss);
+    campaign->bossMotion = fmodf(campaign->bossMotion + dt * phase->speed, 2 * PI);
+    campaign->phaseNotice = fmaxf(0, campaign->phaseNotice - dt);
     UpdateBossPosition(campaign);
     campaign->guardTimer = fmaxf(0, campaign->guardTimer - dt);
     campaign->attackTimer -= dt;
     if (campaign->attackTimer <= 0)
     {
         BossAttackNow(campaign, boss);
-        campaign->attackTimer = boss->cooldown;
+        campaign->attackTimer = phase->cooldown;
     }
 
     Vector3 feet = campaign->player.feet;
@@ -193,6 +240,16 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
                 }
                 campaign->guardTimer = 0.35f;
                 campaign->hitTimer = fmaxf(campaign->hitTimer, 0.25f);
+                int nextPhase = (boss->health - campaign->bossHealth) * boss->phaseCount / boss->health;
+                if (nextPhase > campaign->bossPhase)
+                {
+                    campaign->bossPhase = nextPhase;
+                    campaign->phaseNotice = 1.3f;
+                    campaign->attackCount = 0;
+                    campaign->attackTimer = CurrentPhase(campaign, boss)->cooldown + 0.55f;
+                    campaign->hitTimer = fmaxf(campaign->hitTimer, 0.55f);
+                    memset(campaign->orbs, 0, sizeof(campaign->orbs));
+                }
             }
         }
         else if (feet.y < top - 0.08f && feet.y + campaign->player.height > center.y)
@@ -255,6 +312,7 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     }
 
     BoundingBox arena = Arena(campaign);
+    TrackMazePosition(campaign);
     if (OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
     int health = campaign->health;
     UpdateEncounter(campaign, oldFeet, dt);
@@ -307,10 +365,31 @@ static void DrawPlatforms(const LevelSpec *level)
     }
 }
 
+static void DrawMazeWalls(const LevelSpec *level)
+{
+    if (level->mazeRows == 0) return;
+    const Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.34f);
+    const Color cap = ColorLerp(level->stone, level->trim, 0.32f);
+    for (int i = level->platformCount; i < level->colliderCount; ++i)
+    {
+        BoundingBox box = level->colliders[i];
+        Vector3 center = Vector3Scale(Vector3Add(box.min, box.max), 0.5f);
+        Vector3 size = Vector3Subtract(box.max, box.min);
+        DrawCubeV(center, size, wall);
+        center.y = box.max.y - 0.075f;
+        DrawCube(center, size.x, 0.15f, size.z, cap);
+        center.y = box.min.y + 0.22f;
+        DrawCube(center, size.x + 0.007f, 0.055f, size.z + 0.007f, cap);
+    }
+    Vector2 exit = CampaignMazeCellCenter(level, 0, level->mazeExit);
+    DrawCube((Vector3){ exit.x, 3.25f, exit.y }, CAMPAIGN_MAZE_CELL, 0.23f, 0.32f, level->trim);
+}
+
 static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
 {
     Vector3 center = campaign->bossPosition;
-    Color body = campaign->guardTimer > 0 ? RAYWHITE : boss->color;
+    Color phaseColor = ColorLerp(boss->color, ORANGE, campaign->bossPhase * 0.26f);
+    Color body = campaign->guardTimer > 0 ? RAYWHITE : phaseColor;
     DrawCylinder(center, boss->radius * 0.76f, boss->radius, boss->height, 12, body);
     DrawCylinderWires(center, boss->radius * 0.76f, boss->radius, boss->height, 12, DARKGRAY);
     Vector3 core = center;
@@ -329,6 +408,7 @@ void DrawCampaignWorld(const Campaign *campaign)
     const LevelSpec *level = CurrentLevel(campaign);
     DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
     DrawPlatforms(level);
+    DrawMazeWalls(level);
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
@@ -364,6 +444,30 @@ bool ReadCampaignMenu(InputPointer pointer)
     return ReadUiButton(MenuBounds(), pointer, true).activated;
 }
 
+static void DrawMazeMap(const Campaign *campaign)
+{
+    const LevelSpec *level = CurrentLevel(campaign);
+    if (!level->mazeRows || campaign->checkpoint) return;
+
+    int maxSize = GetScreenHeight() < 480 ? 94 : 144;
+    int unit = maxSize / (level->mazeRows > level->mazeCols ? level->mazeRows : level->mazeCols);
+    int width = level->mazeCols * unit, height = level->mazeRows * unit;
+    int x = GetScreenWidth() - width - 20, y = 106;
+    DrawUiPanel((Rectangle){ (float)x - 6, (float)y - 20, (float)width + 12, (float)height + 26 },
+                (Color){ 12, 20, 29, 223 });
+    DrawText("N  /  EXIT", x, y - 16, 11, RAYWHITE);
+    for (int i = 0; i < level->mazeRows * level->mazeCols; ++i)
+    {
+        if (!campaign->mazeVisited[i] && i != level->mazeExit) continue;
+        DrawRectangle(x + (i % level->mazeCols) * unit, y + (i / level->mazeCols) * unit, unit, unit,
+                      i == level->mazeExit ? level->trim : (Color){ 105, 132, 135, 255 });
+    }
+    int cell = MazeCellAt(level, campaign->player.feet);
+    if (cell >= 0)
+        DrawRectangle(x + (cell % level->mazeCols) * unit, y + (cell / level->mazeCols) * unit,
+                      unit, unit, RAYWHITE);
+}
+
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
 {
     const LevelSpec *level = CurrentLevel(campaign);
@@ -375,8 +479,9 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + 23 * i, 51, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
     const BossSpec *boss = CurrentBoss(campaign);
-    const char *objective = !campaign->checkpoint ? "Reach the arena"
-        : boss ? TextFormat("Stomp %s  %d/%d", boss->name, campaign->bossHealth, boss->health)
+    const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Find the maze exit" : "Reach the arena")
+        : boss ? TextFormat("Stomp %s  %d/%d  /  Phase %d/%d", boss->name, campaign->bossHealth, boss->health,
+                            campaign->bossPhase + 1, boss->phaseCount)
                : "Exit open";
     int objectiveSize = 15;
     while (objectiveSize > 9 && MeasureText(objective, objectiveSize) > width - 103) --objectiveSize;
@@ -401,6 +506,12 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
         return;
     }
 
+    DrawMazeMap(campaign);
+    if (campaign->phaseNotice > 0)
+    {
+        const char *label = TextFormat("Phase %d", campaign->bossPhase + 1);
+        DrawText(label, (width - MeasureText(label, 24)) / 2, 105, 24, GOLD);
+    }
     int x = width / 2, y = height / 2;
     DrawLine(x - 4, y, x + 4, y, RAYWHITE);
     DrawLine(x, y - 4, x, y + 4, RAYWHITE);
