@@ -1,6 +1,7 @@
 #include "campaign.h"
 #include "campaign_content.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include "ui.h"
 
 #include <math.h>
@@ -283,7 +284,7 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt)
 {
-    if (campaign->cleared) return;
+    if (campaign->cleared || campaign->paused) return;
     if (retry)
     {
         Respawn(campaign);
@@ -334,55 +335,108 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     campaign->camera.target = Vector3Add(campaign->camera.position, direction);
 }
 
-static void DrawPlatforms(const LevelSpec *level)
+static Texture2D LoadStoneTexture(int tileWidth, int tileHeight, bool stagger)
 {
-    for (int i = 0; i < level->platformCount; ++i)
+    enum { SIZE = 64 };
+    Color pixels[SIZE * SIZE];
+    for (int y = 0; y < SIZE; ++y)
     {
-        BoundingBox box = level->platforms[i];
-        Vector3 size = Vector3Subtract(box.max, box.min);
-        Vector3 center = Vector3Scale(Vector3Add(box.min, box.max), 0.5f);
-        DrawCubeV(center, size, level->stone);
-        Color surface = ColorLerp(level->stone, level->trim, 0.19f);
-        float top = box.max.y + 0.002f;
-        Vector3 northwest = { box.min.x, top, box.min.z };
-        Vector3 southwest = { box.min.x, top, box.max.z };
-        Vector3 northeast = { box.max.x, top, box.min.z };
-        Vector3 southeast = { box.max.x, top, box.max.z };
-        DrawTriangle3D(northwest, southwest, northeast, surface);
-        DrawTriangle3D(northeast, southwest, southeast, surface);
-        DrawCubeWiresV(center, size, Fade(level->trim, 0.65f));
-        float y = box.max.y + 0.012f;
-        Color seam = ColorLerp(surface, level->stone, 0.68f);
-        for (float z = box.min.z + 1.0f; z < box.max.z; z += 1.0f)
-            DrawLine3D((Vector3){ box.min.x, y, z }, (Vector3){ box.max.x, y, z }, seam);
-        for (float x = box.min.x + 1.0f; x < box.max.x; x += 1.0f)
-            DrawLine3D((Vector3){ x, y, box.min.z }, (Vector3){ x, y, box.max.z }, seam);
-        float z = box.min.z + 0.23f;
-        DrawCube((Vector3){ center.x, y, z }, size.x - 0.35f, 0.012f, 0.075f, level->trim);
-        for (int tile = -1; tile <= 1; ++tile)
-            DrawCube((Vector3){ center.x + tile * 0.3f, y, center.z - 0.38f }, 0.13f, 0.016f, 0.13f,
-                     Fade(level->trim, 0.82f));
+        int offset = stagger && (y / tileHeight) % 2 ? tileWidth / 2 : 0;
+        for (int x = 0; x < SIZE; ++x)
+        {
+            int column = (x + offset) % SIZE;
+            unsigned int grain = ((unsigned int)(x + y * SIZE) * 2654435761u) >> 28;
+            int shade = 211 + ((column / tileWidth * 11 + y / tileHeight * 17) % 30);
+            if (column % tileWidth == 0 || y % tileHeight == 0) shade = 119;
+            else if (column % tileWidth == 1 || y % tileHeight == 1) shade = 243;
+            unsigned char value = (unsigned char)(shade - grain);
+            pixels[y * SIZE + x] = (Color){ value, value, value, 255 };
+        }
+    }
+    Image image = { pixels, SIZE, SIZE, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    Texture2D texture = LoadTextureFromImage(image);
+    if (IsTextureValid(texture))
+    {
+        GenTextureMipmaps(&texture);
+        SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(texture, TEXTURE_WRAP_REPEAT);
+    }
+    return texture;
+}
+
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces)
+{
+    surfaces->walls = LoadStoneTexture(32, 16, true);
+    surfaces->platforms = LoadStoneTexture(32, 32, false);
+    surfaces->ceiling = LoadStoneTexture(16, 32, true);
+    return IsTextureValid(surfaces->walls) && IsTextureValid(surfaces->platforms) &&
+           IsTextureValid(surfaces->ceiling);
+}
+
+void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
+{
+    if (surfaces.walls.id) UnloadTexture(surfaces.walls);
+    if (surfaces.platforms.id) UnloadTexture(surfaces.platforms);
+    if (surfaces.ceiling.id) UnloadTexture(surfaces.ceiling);
+}
+
+static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, Color tint)
+{
+    const Vector3 corners[] = { a, b, c, d };
+    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+    for (int i = 0; i < 4; ++i)
+    {
+        Vector3 v = corners[i];
+        float u = axis == 0 ? v.z : v.x;
+        float w = axis == 1 ? v.z : -v.y;
+        rlTexCoord2f(u * 0.5f, w * 0.5f);
+        rlVertex3f(v.x, v.y, v.z);
     }
 }
 
-static void DrawMazeWalls(const LevelSpec *level)
+static void DrawStoneBox(BoundingBox box, Color tint)
 {
-    if (level->mazeRows == 0) return;
-    const Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.34f);
-    const Color cap = ColorLerp(level->stone, level->trim, 0.32f);
-    for (int i = level->platformCount; i < level->colliderCount; ++i)
+    Vector3 lo = box.min, hi = box.max;
+    Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
+    Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
+    Color side = ColorBrightness(tint, -0.12f);
+    StoneFace(b, a, d, c, 2, tint);
+    StoneFace(e, f, g, h, 2, tint);
+    StoneFace(a, e, h, d, 0, side);
+    StoneFace(f, b, c, g, 0, side);
+    StoneFace(d, h, g, c, 1, tint);
+    StoneFace(a, b, f, e, 1, side);
+}
+
+static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces)
+{
+    rlSetTexture(surfaces->platforms.id);
+    rlBegin(RL_QUADS);
+    Color floor = ColorLerp(level->stone, level->trim, 0.19f);
+    for (int i = 0; i < level->platformCount; ++i) DrawStoneBox(level->platforms[i], floor);
+    rlEnd();
+
+    if (level->mazeRows)
     {
-        BoundingBox box = level->colliders[i];
-        Vector3 center = Vector3Scale(Vector3Add(box.min, box.max), 0.5f);
-        Vector3 size = Vector3Subtract(box.max, box.min);
-        DrawCubeV(center, size, wall);
-        center.y = box.max.y - 0.075f;
-        DrawCube(center, size.x, 0.15f, size.z, cap);
-        center.y = box.min.y + 0.22f;
-        DrawCube(center, size.x + 0.007f, 0.055f, size.z + 0.007f, cap);
+        int roof = level->colliderCount - 1;
+        rlSetTexture(surfaces->walls.id);
+        rlBegin(RL_QUADS);
+        Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
+        for (int i = level->platformCount; i < roof; ++i) DrawStoneBox(level->colliders[i], wall);
+
+        // Match the neighboring wall tiles without adding this tile to collision.
+        Vector2 exit = CampaignMazeCellCenter(level, 0, level->mazeExit);
+        float half = CAMPAIGN_MAZE_CELL * 0.5f;
+        DrawStoneBox((BoundingBox){ { exit.x - half, 0, exit.y - half },
+                                    { exit.x + half, CAMPAIGN_MAZE_HEIGHT, exit.y + half } }, wall);
+        rlEnd();
+
+        rlSetTexture(surfaces->ceiling.id);
+        rlBegin(RL_QUADS);
+        DrawStoneBox(level->colliders[roof], ColorBrightness(floor, -0.15f));
+        rlEnd();
     }
-    Vector2 exit = CampaignMazeCellCenter(level, 0, level->mazeExit);
-    DrawCube((Vector3){ exit.x, 3.25f, exit.y }, CAMPAIGN_MAZE_CELL, 0.23f, 0.32f, level->trim);
+    rlSetTexture(0);
 }
 
 static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
@@ -403,12 +457,11 @@ static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
     }
 }
 
-void DrawCampaignWorld(const Campaign *campaign)
+void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surfaces)
 {
     const LevelSpec *level = CurrentLevel(campaign);
     DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
-    DrawPlatforms(level);
-    DrawMazeWalls(level);
+    DrawCampaignSurfaces(level, surfaces);
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
@@ -444,6 +497,37 @@ bool ReadCampaignMenu(InputPointer pointer)
     return ReadUiButton(MenuBounds(), pointer, true).activated;
 }
 
+static const char *const pauseLabels[] = { "Resume", "Retry checkpoint", NULL };
+
+static Rectangle PauseButton(int index)
+{
+    return (Rectangle){ GetScreenWidth() * 0.5f - 116, GetScreenHeight() * 0.5f - 42 + 46 * index, 232, 38 };
+}
+
+CampaignPauseAction ReadCampaignPause(InputPointer pointer)
+{
+    for (int i = 0; i < 3; ++i)
+        if (ReadUiButton(PauseButton(i), pointer, true).activated) return CAMPAIGN_PAUSE_RESUME + i;
+    return CAMPAIGN_PAUSE_NONE;
+}
+
+static void DrawCampaignPause(const Campaign *campaign, InputPointer pointer)
+{
+    int width = GetScreenWidth(), height = GetScreenHeight();
+    DrawRectangle(0, 0, width, height, (Color){ 8, 15, 24, 201 });
+    DrawUiPanel((Rectangle){ width * 0.5f - 140, height * 0.5f - 109, 280, 219 },
+                (Color){ 15, 24, 35, 255 });
+    DrawText("Paused", (width - MeasureText("Paused", 28)) / 2, height / 2 - 89, 28, RAYWHITE);
+    for (int i = 0; i < 3; ++i)
+    {
+        Rectangle button = PauseButton(i);
+        const char *label = pauseLabels[i];
+        if (i == 1 && !campaign->checkpoint) label = "Retry maze";
+        if (i == 2) label = campaign->debugRun ? "Level select" : "Title screen";
+        DrawUiButton(button, label, ReadUiButton(button, pointer, true), true);
+    }
+}
+
 static void DrawMazeMap(const Campaign *campaign)
 {
     const LevelSpec *level = CurrentLevel(campaign);
@@ -455,12 +539,12 @@ static void DrawMazeMap(const Campaign *campaign)
     int x = GetScreenWidth() - width - 20, y = 106;
     DrawUiPanel((Rectangle){ (float)x - 6, (float)y - 20, (float)width + 12, (float)height + 26 },
                 (Color){ 12, 20, 29, 223 });
-    DrawText("N  /  EXIT", x, y - 16, 11, RAYWHITE);
+    DrawText("N", x, y - 16, 11, RAYWHITE);
     for (int i = 0; i < level->mazeRows * level->mazeCols; ++i)
     {
-        if (!campaign->mazeVisited[i] && i != level->mazeExit) continue;
+        if (!campaign->mazeVisited[i]) continue;
         DrawRectangle(x + (i % level->mazeCols) * unit, y + (i / level->mazeCols) * unit, unit, unit,
-                      i == level->mazeExit ? level->trim : (Color){ 105, 132, 135, 255 });
+                      (Color){ 105, 132, 135, 255 });
     }
     int cell = MazeCellAt(level, campaign->player.feet);
     if (cell >= 0)
@@ -479,7 +563,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + 23 * i, 51, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
     const BossSpec *boss = CurrentBoss(campaign);
-    const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Find the maze exit" : "Reach the arena")
+    const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Explore the maze" : "Reach the arena")
         : boss ? TextFormat("Stomp %s  %d/%d  /  Phase %d/%d", boss->name, campaign->bossHealth, boss->health,
                             campaign->bossPhase + 1, boss->phaseCount)
                : "Exit open";
@@ -487,8 +571,8 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     while (objectiveSize > 9 && MeasureText(objective, objectiveSize) > width - 103) --objectiveSize;
     DrawText(objective, 96, 48, objectiveSize, RAYWHITE);
     bool touch = HasPlayerTouchControls();
-    const char *back = campaign->debugRun ? (touch ? "Levels" : "Esc Levels")
-                                        : (touch ? "Menu" : "Esc Menu");
+    const char *back = campaign->cleared ? (campaign->debugRun ? "Levels" : "Title")
+                                        : (touch ? "Pause" : "Esc Pause");
     DrawUiButton(MenuBounds(), back, ReadUiButton(MenuBounds(), pointer, true), true);
 
     if (campaign->cleared)
@@ -507,6 +591,11 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     }
 
     DrawMazeMap(campaign);
+    if (campaign->paused)
+    {
+        DrawCampaignPause(campaign, pointer);
+        return;
+    }
     if (campaign->phaseNotice > 0)
     {
         const char *label = TextFormat("Phase %d", campaign->bossPhase + 1);

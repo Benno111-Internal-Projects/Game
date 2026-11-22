@@ -8,6 +8,14 @@
 
 enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48, CAMPAIGN_MAZE_SIDE = 31 };
 
+typedef struct CampaignSurfaces {
+    Texture2D walls, platforms, ceiling;
+} CampaignSurfaces;
+
+typedef enum CampaignPauseAction {
+    CAMPAIGN_PAUSE_NONE, CAMPAIGN_PAUSE_RESUME, CAMPAIGN_PAUSE_RETRY, CAMPAIGN_PAUSE_LEAVE
+} CampaignPauseAction;
+
 typedef struct CampaignOrb {
     Vector3 position, velocity;
     float life;
@@ -23,14 +31,17 @@ typedef struct Campaign {
     float time, attackTimer, guardTimer, hitTimer, phaseNotice, bossMotion;
     unsigned int attackCount;
     Vector3 bossPosition;
-    bool checkpoint, debugRun, cleared;
+    bool checkpoint, debugRun, cleared, paused;
     bool mazeVisited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
 } Campaign;
 
 void StartCampaign(Campaign *campaign, int level, bool debugRun);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);
-void DrawCampaignWorld(const Campaign *campaign);
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces);
+void UnloadCampaignSurfaces(CampaignSurfaces surfaces);
+void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surfaces);
+CampaignPauseAction ReadCampaignPause(InputPointer pointer);
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer);
 bool ReadCampaignMenu(InputPointer pointer);
 int ReadDebugLevelSelect(InputPointer pointer);

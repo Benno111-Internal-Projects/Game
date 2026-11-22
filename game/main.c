@@ -130,6 +130,7 @@ typedef struct StarterGame {
     PrefabInstance ballInstance, titleModel;
     bool titleOpen, editorOpen, campaignOpen, debugOpen;
     Campaign campaign;
+    CampaignSurfaces campaignSurfaces;
     SceneEditor editor;
     float titleTime;
     Vector2 titlePointer;
@@ -158,7 +159,8 @@ static bool InitStarter(void *state)
         snprintf(shadersDir, sizeof(shadersDir), "%sshaders/", appDir) >= (int)sizeof(shadersDir))
         return false;
 #endif
-    if (!LoadCampaignLevels(TextFormat("%slevels", assetsDir))) return false;
+    if (!LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
+        !LoadCampaignSurfaces(&game->campaignSurfaces)) return false;
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
     if (!IsModelValid(game->model) || game->model.meshes[0].vertexCount == 0) return false;
@@ -336,12 +338,34 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
 {
     Campaign *campaign = &game->campaign;
     bool touch = HasPlayerTouchControls();
-    if (actions[ACTION_EXIT].pressed || (touch && ReadCampaignMenu(pointer)) ||
-        (campaign->cleared && actions[ACTION_START].pressed))
+    bool escape = actions[ACTION_EXIT].pressed;
+    bool menu = touch && ReadCampaignMenu(pointer);
+    CampaignPauseAction pauseAction = campaign->paused ? ReadCampaignPause(pointer) : CAMPAIGN_PAUSE_NONE;
+    if (pauseAction == CAMPAIGN_PAUSE_LEAVE ||
+        (campaign->cleared && (escape || menu || actions[ACTION_START].pressed)))
     {
         game->campaignOpen = false;
         game->debugOpen = campaign->debugRun;
         game->titleOpen = !game->debugOpen;
+        if (!touch) EnableCursor();
+        return;
+    }
+    if (campaign->paused)
+    {
+        if (escape || actions[ACTION_START].pressed || pauseAction == CAMPAIGN_PAUSE_RESUME ||
+            pauseAction == CAMPAIGN_PAUSE_RETRY)
+        {
+            campaign->paused = false;
+            if (!touch) DisableCursor();
+            if (pauseAction == CAMPAIGN_PAUSE_RETRY)
+                StepCampaign(campaign, (Vector2){ 0 }, (Vector2){ 0 }, false, false, true, 0);
+        }
+        return;
+    }
+    if (escape || menu)
+    {
+        campaign->paused = true;
+        ResetPlayerTouch(&campaign->touch);
         if (!touch) EnableCursor();
         return;
     }
@@ -602,7 +626,7 @@ static void DrawStarter(const void *state)
     {
         BeginMode3D(game->campaign.camera);
         DrawSky(game->sky, game->campaign.camera.position);
-        DrawCampaignWorld(&game->campaign);
+        DrawCampaignWorld(&game->campaign, &game->campaignSurfaces);
         EndMode3D();
         DrawCampaignHud(&game->campaign, (InputPointer){ .position = game->titlePointer });
         return;
@@ -690,6 +714,7 @@ static void DrawStarter(const void *state)
 static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
+    UnloadCampaignSurfaces(game->campaignSurfaces);
     UnloadTerrainMap(&game->editor.terrain);
     UnloadSceneMusic(&game->music);
     DestroyAudioVoice(&game->dropVoice);

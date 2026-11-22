@@ -125,6 +125,10 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
     level->platforms[1] = (BoundingBox){ { exitX - 7, -0.8f, north - 15 }, { exitX + 7, 0, north } };
     memcpy(level->colliders, level->platforms, 2 * sizeof(level->platforms[0]));
 
+    // Keep the solid roof last so it can use a different surface when drawn.
+    BoundingBox roof = { { -halfWidth, CAMPAIGN_MAZE_HEIGHT, north },
+                         { halfWidth, CAMPAIGN_MAZE_HEIGHT + 0.35f, 0 } };
+
     // Merge horizontal wall tiles into strips for rendering and player collision.
     for (int row = 0; row < level->mazeRows; ++row)
     {
@@ -142,10 +146,11 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
             float z = north + row * CAMPAIGN_MAZE_CELL;
             level->colliders[level->colliderCount++] = (BoundingBox){
                 { first * CAMPAIGN_MAZE_CELL - halfWidth, 0, z },
-                { col * CAMPAIGN_MAZE_CELL - halfWidth, 3.6f, z + CAMPAIGN_MAZE_CELL },
+                { col * CAMPAIGN_MAZE_CELL - halfWidth, CAMPAIGN_MAZE_HEIGHT, z + CAMPAIGN_MAZE_CELL },
             };
         }
     }
+    level->colliders[level->colliderCount++] = roof;
     return true;
 }
 

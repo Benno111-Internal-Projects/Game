@@ -25,9 +25,9 @@ size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 ## Campaign
 
 Choose **Start Campaign** to play through seven levels and nine bosses. Explore a
-maze before each arena. The minimap shows explored passages and the exit. Land
-on a boss from above to damage it,
-jump over its attacks, and enter the gate after defeating the arena's bosses.
+roofed maze before each arena. The minimap records explored passages. Land on a
+boss from above to damage it, jump over its attacks, and enter the gate after
+defeating the arena's bosses.
 Reaching an arena sets a checkpoint. Falling or losing all three health
 points restarts from the latest checkpoint. Campaign progress resets when
 starting a new run. Eight bosses change their movement and attacks as they take
@@ -44,8 +44,10 @@ damage. The Hollow Crown has three phases.
 | Crown Keep | Cinder Regent, The Hollow Crown |
 
 On desktop, use **WASD**, mouse look, **Space** to jump, **Left Shift** to
-sprint, **R** to retry, and **Esc** to return. Mobile has an on-screen stick,
-swipe-to-look, Jump, and a menu button.
+sprint, **R** to retry, and **Esc** to pause. On mobile, use the on-screen
+stick, swipe-to-look, Jump, and the **Pause** button. The pause menu can resume
+play, retry from the latest checkpoint, or return to the title screen or debug
+level picker.
 
 **Debug Level Select** opens any stage directly. Click or tap its name, or
 press **1–7** on a keyboard. Debug runs return to the picker after the stage
@@ -67,8 +69,9 @@ request. The bundled levels use `DORF-LEVEL 2` followed by these fields in order
 Use `#` for walls, `.` for passages, `S` for one interior spawn, and `E` for one
 exit on the top edge outside the corners. Each passage must connect to the
 spawn, and the rest of the boundary must be walls. Each tile spans 2.5 world
-units. The arena attaches to the exit automatically. Assign each of the nine
-boss IDs once across the pack. Use **Debug Level Select** to play-test changes.
+units. The arena attaches to the exit automatically. The exit tile is rendered
+as a wall that the player can walk through. Assign each of the nine boss IDs
+once across the pack. Use **Debug Level Select** to play-test changes.
 The game also loads legacy `DORF-LEVEL 1` platform layouts.
 
 Run `./build/benno111-engene --check-levels game/assets/levels` to validate the
