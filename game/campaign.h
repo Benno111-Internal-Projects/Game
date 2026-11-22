@@ -8,10 +8,15 @@
 
 enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48, CAMPAIGN_MAZE_SIDE = 200 };
 
+struct LevelSpec;
+
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;
     Shader mazeLighting;
-    int torchLightsLocation;
+    Texture2D mazeLightmap;
+    const struct LevelSpec *litLevel;
+    unsigned long long litStage;
+    int lightmapLocation, mazeSizeLocation, flickerLocation;
 } CampaignSurfaces;
 
 typedef enum CampaignPauseAction {
@@ -26,8 +31,6 @@ typedef struct CampaignOrb {
     Vector3 position, velocity;
     float life;
 } CampaignOrb;
-
-struct LevelSpec;
 
 enum { MAZE_RUN_LIVES = 3 };
 
@@ -58,6 +61,7 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir);
 void ContinueCampaign(Campaign *campaign);
 bool ReadCampaignContinue(InputPointer pointer);
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces);
+void PrepareCampaignLighting(const Campaign *campaign, CampaignSurfaces *surfaces);
 void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surfaces);
 CampaignPauseAction ReadCampaignPause(InputPointer pointer);
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer);

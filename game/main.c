@@ -328,10 +328,12 @@ static void DrawPlayerAvatar(const PlayerController *player)
 
 static void OpenCampaign(StarterGame *game, int level, bool debug, bool infinite)
 {
+    game->campaignSurfaces.litLevel = NULL;
     if (infinite) StartEndlessMazes(&game->campaign, &game->endlessLevel);
     else StartCampaign(&game->campaign, level, debug);
     game->campaignOpen = true;
     game->titleOpen = game->debugOpen = game->mazesOpen = false;
+    PrepareCampaignLighting(&game->campaign, &game->campaignSurfaces);
     if (!HasPlayerTouchControls()) DisableCursor();
 }
 
@@ -406,6 +408,7 @@ static bool UpdateStarter(void *state, float deltaTime)
     {
         game->titlePointer = pointer.position;
         UpdateCampaignMode(game, actions, pointer, deltaTime);
+        if (game->campaignOpen) PrepareCampaignLighting(&game->campaign, &game->campaignSurfaces);
         UpdateStarterAudio(game);
         return true;
     }

@@ -5,6 +5,7 @@
 #include "ui.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const LevelSpec *CurrentLevel(const Campaign *campaign)
@@ -500,8 +501,11 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir)
                                         TextFormat("%smaze.frag", shaderDir));
     if (!IsShaderValid(surfaces->mazeLighting) || surfaces->mazeLighting.id == rlGetShaderIdDefault())
         return false;
-    surfaces->torchLightsLocation = GetShaderLocation(surfaces->mazeLighting, "torchLights[0]");
-    return surfaces->torchLightsLocation >= 0 && IsTextureValid(surfaces->walls) &&
+    surfaces->lightmapLocation = GetShaderLocation(surfaces->mazeLighting, "lightmap");
+    surfaces->mazeSizeLocation = GetShaderLocation(surfaces->mazeLighting, "mazeSize");
+    surfaces->flickerLocation = GetShaderLocation(surfaces->mazeLighting, "flicker");
+    return surfaces->lightmapLocation >= 0 && surfaces->mazeSizeLocation >= 0 &&
+           surfaces->flickerLocation >= 0 && IsTextureValid(surfaces->walls) &&
            IsTextureValid(surfaces->platforms) && IsTextureValid(surfaces->ceiling);
 }
 
@@ -510,12 +514,14 @@ void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
     if (surfaces.walls.id) UnloadTexture(surfaces.walls);
     if (surfaces.platforms.id) UnloadTexture(surfaces.platforms);
     if (surfaces.ceiling.id) UnloadTexture(surfaces.ceiling);
+    if (surfaces.mazeLightmap.id) UnloadTexture(surfaces.mazeLightmap);
     if (surfaces.mazeLighting.id && surfaces.mazeLighting.id != rlGetShaderIdDefault())
         UnloadShader(surfaces.mazeLighting);
 }
 
-static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, Color tint)
+static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, float side, Color tint)
 {
+    rlNormal3f(axis == 0 ? side : 0, axis == 1 ? side : 0, axis == 2 ? side : 0);
     const Vector3 corners[] = { a, b, c, d };
     rlColor4ub(tint.r, tint.g, tint.b, tint.a);
     for (int i = 0; i < 4; ++i)
@@ -534,12 +540,12 @@ static void DrawStoneBox(BoundingBox box, Color tint)
     Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
     Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
     Color side = ColorBrightness(tint, -0.12f);
-    StoneFace(b, a, d, c, 2, tint);
-    StoneFace(e, f, g, h, 2, tint);
-    StoneFace(a, e, h, d, 0, side);
-    StoneFace(f, b, c, g, 0, side);
-    StoneFace(d, h, g, c, 1, tint);
-    StoneFace(a, b, f, e, 1, side);
+    StoneFace(b, a, d, c, 2, -1, tint);
+    StoneFace(e, f, g, h, 2, 1, tint);
+    StoneFace(a, e, h, d, 0, -1, side);
+    StoneFace(f, b, c, g, 0, 1, side);
+    StoneFace(d, h, g, c, 1, 1, tint);
+    StoneFace(a, b, f, e, 1, -1, side);
 }
 
 static void DrawTexturedStone(Texture2D texture, BoundingBox box, Color color)
@@ -556,28 +562,109 @@ static float TorchFlicker(Vector3 flame, float time)
     return 0.89f + 0.08f * sinf(time * 12.0f + flame.x) + 0.07f * sinf(time * 19.0f + flame.z);
 }
 
-static void SetMazeLights(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye, float time)
+enum { LIGHT_SAMPLES = 4 };
+#define TORCH_RANGE_SQUARED 28.0f
+
+static bool BlocksLight(const LevelSpec *level, int row, int col)
 {
-    enum { LIGHT_COUNT = 8 };
-    Vector4 lights[LIGHT_COUNT] = { 0 };
-    float distances[LIGHT_COUNT];
-    for (int i = 0; i < LIGHT_COUNT; ++i) distances[i] = 24.0f * 24.0f;
-    MazeRegion region = NearbyMaze(level, eye, 10);
-    for (int row = region.firstRow; row < region.lastRow; ++row)
-        for (int col = region.firstCol; col < region.lastCol; ++col)
+    if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return true;
+    char tile = level->maze[row * level->mazeCols + col];
+    return tile == '#' || tile == 'E';
+}
+
+// Traverse exact tile boundaries and reject rays that graze a blocked corner.
+static bool TorchVisible(const LevelSpec *level, Vector2 start, Vector2 target)
+{
+    int col = (int)start.x, row = (int)start.y;
+    int lastCol = (int)target.x, lastRow = (int)target.y;
+    float dx = target.x - start.x, dz = target.y - start.y;
+    int stepX = dx < 0 ? -1 : 1, stepZ = dz < 0 ? -1 : 1;
+    float intervalX = dx == 0 ? INFINITY : 1.0f / fabsf(dx);
+    float intervalZ = dz == 0 ? INFINITY : 1.0f / fabsf(dz);
+    float nextX = dx == 0 ? INFINITY : fabsf(col + (stepX > 0) - start.x) * intervalX;
+    float nextZ = dz == 0 ? INFINITY : fabsf(row + (stepZ > 0) - start.y) * intervalZ;
+    while (col != lastCol || row != lastRow)
+    {
+        if (fabsf(nextX - nextZ) < 0.00001f)
+        {
+            if (BlocksLight(level, row, col + stepX) || BlocksLight(level, row + stepZ, col))
+                return false;
+            col += stepX;
+            row += stepZ;
+            nextX += intervalX;
+            nextZ += intervalZ;
+        }
+        else if (nextX < nextZ)
+        {
+            col += stepX;
+            nextX += intervalX;
+        }
+        else
+        {
+            row += stepZ;
+            nextZ += intervalZ;
+        }
+        if (BlocksLight(level, row, col)) return false;
+    }
+    return true;
+}
+
+static unsigned char AddTorchSample(unsigned char existing, float squaredDistance)
+{
+    float falloff = fmaxf(0, 1.0f - squaredDistance / TORCH_RANGE_SQUARED);
+    return (unsigned char)fminf(255, existing + 255 * falloff * falloff);
+}
+
+static void BakeTorch(const LevelSpec *level, Vector3 flame, Color *pixels, int width)
+{
+    Vector2 source = MazeGridPosition(level, flame);
+    // Range is sqrt(28) world units, fewer than three maze cells.
+    MazeRegion region = NearbyMaze(level, flame, 3);
+    for (int row = region.firstRow * LIGHT_SAMPLES; row < region.lastRow * LIGHT_SAMPLES; ++row)
+        for (int col = region.firstCol * LIGHT_SAMPLES; col < region.lastCol * LIGHT_SAMPLES; ++col)
+        {
+            if (BlocksLight(level, row / LIGHT_SAMPLES, col / LIGHT_SAMPLES)) continue;
+            Vector2 sample = { (col + 0.5f) / LIGHT_SAMPLES, (row + 0.5f) / LIGHT_SAMPLES };
+            float distance = Vector2DistanceSqr(source, sample) * CAMPAIGN_MAZE_CELL * CAMPAIGN_MAZE_CELL;
+            if (distance >= TORCH_RANGE_SQUARED || !TorchVisible(level, source, sample)) continue;
+
+            Color *pixel = &pixels[row * width + col];
+            float ceilingOffset = CAMPAIGN_MAZE_HEIGHT - flame.y;
+            pixel->r = AddTorchSample(pixel->r, distance + flame.y * flame.y);
+            pixel->g = AddTorchSample(pixel->g, distance);
+            pixel->b = AddTorchSample(pixel->b, distance + ceilingOffset * ceilingOffset);
+        }
+}
+
+void PrepareCampaignLighting(const Campaign *campaign, CampaignSurfaces *surfaces)
+{
+    const LevelSpec *level = CurrentLevel(campaign);
+    unsigned long long stage = campaign->stage;
+    if (!level->mazeRows) return;
+    if (surfaces->litLevel == level && surfaces->litStage == stage) return;
+    if (surfaces->mazeLightmap.id) UnloadTexture(surfaces->mazeLightmap);
+    surfaces->mazeLightmap = (Texture2D){ 0 };
+    surfaces->litLevel = level;
+    surfaces->litStage = stage;
+
+    int width = level->mazeCols * LIGHT_SAMPLES, height = level->mazeRows * LIGHT_SAMPLES;
+    Color *pixels = calloc((size_t)width * height, sizeof(*pixels));
+    if (!pixels) return;
+    for (int row = 0; row < level->mazeRows; ++row)
+        for (int col = 0; col < level->mazeCols; ++col)
         {
             Vector3 flame;
-            if (!WallTorch(level, row, col, &flame, NULL)) continue;
-            float distance = Vector3DistanceSqr(eye, flame);
-            int farthest = 0;
-            for (int i = 1; i < LIGHT_COUNT; ++i)
-                if (distances[i] > distances[farthest]) farthest = i;
-            if (distance >= distances[farthest]) continue;
-            distances[farthest] = distance;
-            lights[farthest] = (Vector4){ flame.x, flame.y, flame.z, TorchFlicker(flame, time) };
+            if (WallTorch(level, row, col, &flame, NULL)) BakeTorch(level, flame, pixels, width);
         }
-    SetShaderValueV(surfaces->mazeLighting, surfaces->torchLightsLocation,
-                    lights, SHADER_UNIFORM_VEC4, LIGHT_COUNT);
+
+    Image image = { pixels, width, height, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    surfaces->mazeLightmap = LoadTextureFromImage(image);
+    free(pixels);
+    if (surfaces->mazeLightmap.id)
+    {
+        SetTextureFilter(surfaces->mazeLightmap, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(surfaces->mazeLightmap, TEXTURE_WRAP_CLAMP);
+    }
 }
 
 static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
@@ -599,7 +686,8 @@ static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
         }
 }
 
-static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye, float time)
+static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces,
+                                 Vector3 eye, float time)
 {
     Color floor = ColorLerp(level->stone, level->trim, 0.19f);
     Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
@@ -616,8 +704,13 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
     if (!level->mazeRows) return;
 
-    SetMazeLights(level, surfaces, eye, time);
+    Vector2 dims = { (float)level->mazeCols, (float)level->mazeRows };
+    float flicker = surfaces->mazeLightmap.id ? TorchFlicker(Vector3Zero(), time) : 0;
+    Texture2D lightmap = surfaces->mazeLightmap.id ? surfaces->mazeLightmap : surfaces->walls;
     BeginShaderMode(surfaces->mazeLighting);
+    SetShaderValue(surfaces->mazeLighting, surfaces->mazeSizeLocation, &dims, SHADER_UNIFORM_VEC2);
+    SetShaderValue(surfaces->mazeLighting, surfaces->flickerLocation, &flicker, SHADER_UNIFORM_FLOAT);
+    SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
     DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
     rlSetTexture(surfaces->walls.id);
@@ -637,6 +730,9 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
             int first = col++;
             // The exit tile looks like its neighbors and has no collider.
             while (col < region.lastCol && (tiles[col] == '#' || tiles[col] == 'E')) ++col;
+            // Raylib clears secondary samplers whenever its immediate batch flushes.
+            if (rlCheckRenderBatchLimit(24))
+                SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
             DrawStoneBox(MazeWall(level, row, first, col), wall);
         }
     }
