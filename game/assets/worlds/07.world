@@ -1,0 +1,10 @@
+DORF-WORLD 1
+name Crown Plateau
+low 75 62 86
+high 173 146 134
+terrain 23 0.027 6.5
+spawn 230 785
+beacon 402 657
+beacon 516 478
+beacon 717 469
+gate 812 260

@@ -1,0 +1,10 @@
+DORF-WORLD 1
+name Windbreak Highlands
+low 69 78 86
+high 173 185 164
+terrain 22 0.023 3.8
+spawn 252 790
+beacon 404 662
+beacon 454 461
+beacon 641 429
+gate 788 235

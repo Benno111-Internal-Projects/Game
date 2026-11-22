@@ -40,6 +40,7 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGLFW_BUILD_WAYLAND=OFF
           cmake --build build --parallel
           ./build/benno111-engene --check-levels
+          ./build/benno111-engene --check-worlds
           tar -czf benno111-engene-linux.tar.gz -C build benno111-engene assets shaders
 
       - name: Build Windows
@@ -48,6 +49,7 @@ jobs:
           cmake -S . -B build -A x64
           cmake --build build --config Release --parallel
           ./build/Release/benno111-engene.exe --check-levels
+          ./build/Release/benno111-engene.exe --check-worlds
 
       - name: Package and test Linux installer
         if: matrix.platform == 'linux'
@@ -117,7 +119,10 @@ jobs:
           grep -Fx 'assets/model.vert' apk-files.txt
           grep -Fx 'assets/sample.obj' apk-files.txt
           grep -Fx 'assets/starter-ambient.ogg' apk-files.txt
-          for level in 01 02 03 04 05 06 07; do grep -Fx "assets/levels/$level.level" apk-files.txt; done
+          for level in 01 02 03 04 05 06 07; do
+            grep -Fx "assets/levels/$level.level" apk-files.txt
+            grep -Fx "assets/worlds/$level.world" apk-files.txt
+          done
 
       - name: Build unsigned iOS device app and package IPA
         if: matrix.platform == 'ios'
@@ -139,6 +144,7 @@ jobs:
           grep -Fx 'Payload/benno111-engene.app/benno111-engene' ipa-files.txt
           for level in 01 02 03 04 05 06 07; do
             grep -Fx "Payload/benno111-engene.app/assets/levels/$level.level" ipa-files.txt
+            grep -Fx "Payload/benno111-engene.app/assets/worlds/$level.world" ipa-files.txt
           done
 
       - name: Upload Linux build
@@ -155,6 +161,14 @@ jobs:
         with:
           name: dorfplatformer-level-pack
           path: game/assets/levels/*.level
+          if-no-files-found: error
+
+      - name: Upload main campaign world pack
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dorfplatformer-world-pack
+          path: game/assets/worlds/*.world
           if-no-files-found: error
 
       - name: Upload Windows build

@@ -15,10 +15,11 @@ typedef struct WorldCampaign {
     PlayerTouch touch;
     WalkCamera view;
     Camera3D camera;
-    bool paused, complete;
+    bool paused, complete, singleWorld;
 } WorldCampaign;
 
-bool OpenWorldCampaign(WorldCampaign *campaign);
+// Pass -1 to play the full campaign, or a world index to play one level.
+bool OpenWorldCampaign(WorldCampaign *campaign, int level);
 void CloseWorldCampaign(WorldCampaign *campaign);
 // Returns false when the player chooses to return to the title screen.
 bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 movement,

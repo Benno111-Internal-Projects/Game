@@ -24,8 +24,8 @@ size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
 ## Main Campaign
 
-Choose **Main Campaign** or press **Enter** on the title screen. The route
-crosses Willow Basin, Copper Dunes, Rainmire, Windbreak Highlands, Ember Expanse,
+Choose **Main Campaign** on the title screen. Pick any world, use **1–7**,
+or press **Enter** in the picker to play the full campaign. The route crosses Willow Basin, Copper Dunes, Rainmire, Windbreak Highlands, Ember Expanse,
 Frostglass Range, and Crown Plateau. Activate three beacons in each world, then
 follow the heading in the HUD to the world gate. The last beacon reached is
 your checkpoint. **R** retries it, and **Esc** opens the pause menu. Mobile uses
@@ -35,6 +35,23 @@ Every world spans 1,024 × 1,024 units and uses 32 × 32-unit terrain chunks.
 The landscape builds nearby chunks as they enter the camera view and frees
 chunks left behind. Collision samples the same terrain grid, including
 terrain beyond the current view.
+
+### Edit and ship world updates
+
+Choose **Edit** beside a world in the campaign picker. Raise or lower terrain
+with the brush, or place the spawn, three beacons, and gate on the map.
+**Save update** writes a numbered `.world` file to the game's writable data
+directory and applies it locally. Return to the picker to play the edited
+world. Saved edits load again on startup and take priority over bundled files.
+
+To ship a world update, copy the saved `.world` file to the matching filename
+under `game/assets/worlds/` and submit the change to GitHub. The game logs the
+save path. Desktop installations can replace their files in `assets/worlds/`
+and restart. Mobile builds receive bundled changes with the next app package.
+GitHub Actions validates the world's text format and publishes the seven
+files as **dorfplatformer-world-pack**. Run
+`./build/benno111-engene --check-worlds game/assets/worlds` to check the pack
+locally.
 
 ## Mazes bonus mode
 

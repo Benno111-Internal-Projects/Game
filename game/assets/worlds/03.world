@@ -1,0 +1,10 @@
+DORF-WORLD 1
+name Rainmire
+low 37 69 70
+high 117 155 101
+terrain 6 0.045 2.2
+spawn 243 336
+beacon 360 452
+beacon 506 451
+beacon 670 591
+gate 787 759

@@ -3,56 +3,20 @@
 #include "raymath.h"
 #include "terrain.h"
 #include "ui.h"
+#include "world_levels.h"
 
 #include <stdlib.h>
 
 enum {
-    WORLD_SIDE = 1024, CHUNK_SIDE = TERRAIN_SIDE - 1, CHUNKS_PER_SIDE = WORLD_SIDE / CHUNK_SIDE,
-    CHUNK_RADIUS = 5, CACHE_SIDE = 2 * CHUNK_RADIUS + 1, WAYPOINT_COUNT = 3
+    CHUNK_SIDE = TERRAIN_SIDE - 1, CHUNKS_PER_SIDE = WORLD_SIDE / CHUNK_SIDE,
+    CHUNK_RADIUS = 5, CACHE_SIDE = 2 * CHUNK_RADIUS + 1
 };
-
-typedef struct WorldSpec {
-    const char *name;
-    Color low, high;
-    float relief, frequency, phase;
-    Vector2 spawn, waypoints[WAYPOINT_COUNT], gate;
-} WorldSpec;
-
-static const WorldSpec worlds[] = {
-    { "Willow Basin", { 48, 87, 59, 255 }, { 145, 181, 89, 255 }, 9, 0.020f, 0.3f,
-      { 256, 785 }, { { 310, 660 }, { 455, 532 }, { 572, 363 } }, { 660, 242 } },
-    { "Copper Dunes", { 132, 72, 47, 255 }, { 229, 172, 89, 255 }, 14, 0.029f, 1.4f,
-      { 835, 770 }, { { 701, 720 }, { 547, 569 }, { 344, 576 } }, { 202, 425 } },
-    { "Rainmire", { 37, 69, 70, 255 }, { 117, 155, 101, 255 }, 6, 0.045f, 2.2f,
-      { 243, 336 }, { { 360, 452 }, { 506, 451 }, { 670, 591 } }, { 787, 759 } },
-    { "Windbreak Highlands", { 69, 78, 86, 255 }, { 173, 185, 164, 255 }, 22, 0.023f, 3.8f,
-      { 252, 790 }, { { 404, 662 }, { 454, 461 }, { 641, 429 } }, { 788, 235 } },
-    { "Ember Expanse", { 65, 45, 51, 255 }, { 183, 104, 66, 255 }, 17, 0.035f, 4.3f,
-      { 760, 819 }, { { 707, 630 }, { 501, 648 }, { 374, 478 } }, { 212, 316 } },
-    { "Frostglass Range", { 66, 99, 127, 255 }, { 211, 231, 233, 255 }, 26, 0.021f, 5.7f,
-      { 219, 761 }, { { 356, 637 }, { 535, 516 }, { 719, 357 } }, { 821, 197 } },
-    { "Crown Plateau", { 75, 62, 86, 255 }, { 173, 146, 134, 255 }, 23, 0.027f, 6.5f,
-      { 230, 785 }, { { 402, 657 }, { 516, 478 }, { 717, 469 } }, { 812, 260 } },
-};
-
-enum { WORLD_COUNT = sizeof(worlds) / sizeof(worlds[0]) };
 
 struct WorldChunk {
     TerrainMap map;
     int col, row;
     bool visible;
 };
-
-static float WorldHeight(const void *data, float x, float z)
-{
-    const WorldSpec *world = data;
-    float p = x * world->frequency, q = z * world->frequency;
-    float phase = world->phase;
-    float ridges = sinf(p + 0.8f * sinf(q * 0.61f + phase));
-    float folds = cosf(q * 0.83f - p * 0.39f + phase);
-    float detail = sinf(p * 2.1f + q * 1.6f + phase);
-    return world->relief * (0.49f * ridges + 0.37f * folds + 0.07f * detail);
-}
 
 static float GroundHeight(const void *data, float x, float z)
 {
@@ -149,7 +113,7 @@ static void UpdateChunks(WorldCampaign *campaign)
         for (int col = centerCol - CHUNK_RADIUS; col <= centerCol + CHUNK_RADIUS; ++col)
         {
             if (col < 0 || row < 0 || col >= CHUNKS_PER_SIDE || row >= CHUNKS_PER_SIDE ||
-                !ChunkInView(view, col, row, world->relief)) continue;
+                !ChunkInView(view, col, row, world->relief + (world->brushCount ? WORLD_BRUSH_LIMIT : 0))) continue;
             WorldChunk *chunk = &campaign->chunks[(row % CACHE_SIDE) * CACHE_SIDE + col % CACHE_SIDE];
             if (!chunk->map.enabled)
             {
@@ -163,9 +127,10 @@ static void UpdateChunks(WorldCampaign *campaign)
         }
 }
 
-bool OpenWorldCampaign(WorldCampaign *campaign)
+bool OpenWorldCampaign(WorldCampaign *campaign, int level)
 {
-    *campaign = (WorldCampaign){0};
+    if (level < -1 || level >= WORLD_COUNT) return false;
+    *campaign = (WorldCampaign){ .world = level < 0 ? 0 : level, .singleWorld = level >= 0 };
     campaign->chunks = calloc(CACHE_SIDE * CACHE_SIDE, sizeof(*campaign->chunks));
     if (!campaign->chunks) return false;
     RespawnWorld(campaign);
@@ -230,7 +195,7 @@ bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 
     else if (Vector2DistanceSqr(position, Destination(campaign)) <= 3.0f * 3.0f)
     {
         if (campaign->waypoint < WAYPOINT_COUNT) ++campaign->waypoint;
-        else if (campaign->world + 1 == WORLD_COUNT)
+        else if (campaign->singleWorld || campaign->world + 1 == WORLD_COUNT)
         {
             campaign->complete = true;
             if (!touch) EnableCursor();
@@ -287,15 +252,16 @@ void DrawWorldCampaignHud(const WorldCampaign *campaign, InputPointer pointer)
     Color panel = { 13, 24, 34, 240 };
     if (campaign->paused || campaign->complete)
     {
-        const char *heading = campaign->complete ? "Campaign complete" : "Paused";
+        const char *heading = !campaign->complete ? "Paused" :
+                              campaign->singleWorld ? "World complete" : "Campaign complete";
         DrawRectangle(0, 0, width, height, (Color){ 8, 15, 23, 215 });
         DrawText(heading, (width - MeasureText(heading, 28)) / 2, height / 2 - 56, 28, RAYWHITE);
         Rectangle first = WorldButton(1);
-        DrawUiButton(first, campaign->complete ? "Title screen" : "Resume", ReadUiButton(first, pointer, true), true);
+        DrawUiButton(first, campaign->complete ? "Campaign menu" : "Resume", ReadUiButton(first, pointer, true), true);
         if (campaign->paused)
         {
             Rectangle second = WorldButton(2);
-            DrawUiButton(second, "Title screen", ReadUiButton(second, pointer, true), true);
+            DrawUiButton(second, "Campaign menu", ReadUiButton(second, pointer, true), true);
         }
         return;
     }

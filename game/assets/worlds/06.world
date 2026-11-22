@@ -1,0 +1,10 @@
+DORF-WORLD 1
+name Frostglass Range
+low 66 99 127
+high 211 231 233
+terrain 26 0.021 5.7
+spawn 219 761
+beacon 356 637
+beacon 535 516
+beacon 719 357
+gate 821 197

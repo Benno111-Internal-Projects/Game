@@ -1,0 +1,10 @@
+DORF-WORLD 1
+name Willow Basin
+low 48 87 59
+high 145 181 89
+terrain 9 0.020 0.3
+spawn 256 785
+beacon 310 660
+beacon 455 532
+beacon 572 363
+gate 660 242

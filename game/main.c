@@ -18,6 +18,7 @@
 #include "title_screen.h"
 #include "window.h"
 #include "world_campaign.h"
+#include "world_editor.h"
 #include "scene.h"
 #include "scene_editor.h"
 #include "scene_music.h"
@@ -129,9 +130,10 @@ typedef struct StarterGame {
     BallDrawData ballDraw;
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
     PrefabInstance ballInstance, titleModel;
-    bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen;
+    bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen, worldPickerOpen, worldEditorOpen;
     Campaign campaign;
     WorldCampaign worlds;
+    WorldEditor worldEditor;
     LevelSpec endlessLevel;
     CampaignSurfaces campaignSurfaces;
     SceneEditor editor;
@@ -162,8 +164,10 @@ static bool InitStarter(void *state)
         snprintf(shadersDir, sizeof(shadersDir), "%sshaders/", appDir) >= (int)sizeof(shadersDir))
         return false;
 #endif
-    if (!LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
+    if (!LoadWorldLevels(TextFormat("%sworlds", assetsDir)) ||
+        !LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
         !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir)) return false;
+    LoadWorldOverrides();
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
     if (!IsModelValid(game->model) || game->model.meshes[0].vertexCount == 0) return false;
@@ -420,7 +424,54 @@ static bool UpdateStarter(void *state, float deltaTime)
             CloseWorldCampaign(&game->worlds);
             if (!HasPlayerTouchControls()) EnableCursor();
             game->worldOpen = false;
+            game->worldPickerOpen = true;
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
+    if (game->worldPickerOpen)
+    {
+        game->titlePointer = pointer.position;
+        int choice = ReadWorldPicker(pointer);
+        if (actions[ACTION_EXIT].pressed || choice == WORLD_PICK_BACK)
+        {
+            game->worldPickerOpen = false;
             game->titleOpen = true;
+        }
+        else
+        {
+            if (choice == WORLD_PICK_NONE)
+                for (int i = 0; i < WORLD_COUNT; ++i)
+                    if (IsKeyPressed(KEY_ONE + i)) choice = i * 2;
+            if (choice == WORLD_PICK_NONE && actions[ACTION_START].pressed) choice = WORLD_PICK_FULL;
+            if (choice >= 0 && choice < WORLD_PICK_FULL && choice % 2)
+            {
+                OpenWorldEditor(&game->worldEditor, choice / 2);
+                game->worldEditorOpen = true;
+                game->worldPickerOpen = false;
+            }
+            else if (choice >= 0)
+            {
+                if (OpenWorldCampaign(&game->worlds, choice == WORLD_PICK_FULL ? -1 : choice / 2))
+                {
+                    game->worldOpen = true;
+                    game->worldPickerOpen = false;
+                    if (!HasPlayerTouchControls()) DisableCursor();
+                }
+                else TraceLog(LOG_ERROR, "Could not allocate campaign terrain cache");
+            }
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
+    if (game->worldEditorOpen)
+    {
+        game->titlePointer = pointer.position;
+        if (actions[ACTION_EXIT].pressed || !UpdateWorldEditor(&game->worldEditor, pointer))
+        {
+            CloseWorldEditor(&game->worldEditor);
+            game->worldEditorOpen = false;
+            game->worldPickerOpen = true;
         }
         UpdateStarterAudio(game);
         return true;
@@ -498,13 +549,8 @@ static bool UpdateStarter(void *state, float deltaTime)
         }
         if (action == TITLE_CAMPAIGN || actions[ACTION_START].pressed)
         {
-            if (OpenWorldCampaign(&game->worlds))
-            {
-                game->worldOpen = true;
-                game->titleOpen = false;
-                if (!HasPlayerTouchControls()) DisableCursor();
-            }
-            else TraceLog(LOG_ERROR, "Could not allocate campaign terrain cache");
+            game->worldPickerOpen = true;
+            game->titleOpen = false;
             UpdateStarterAudio(game);
             return true;
         }
@@ -697,6 +743,16 @@ static void DrawStarter(const void *state)
         DrawWorldCampaignHud(&game->worlds, (InputPointer){ .position = game->titlePointer });
         return;
     }
+    if (game->worldPickerOpen)
+    {
+        DrawWorldPicker((InputPointer){ .position = game->titlePointer });
+        return;
+    }
+    if (game->worldEditorOpen)
+    {
+        DrawWorldEditor(&game->worldEditor, (InputPointer){ .position = game->titlePointer });
+        return;
+    }
     if (game->campaignOpen)
     {
         BeginMode3D(game->campaign.camera);
@@ -795,6 +851,7 @@ static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
     CloseWorldCampaign(&game->worlds);
+    CloseWorldEditor(&game->worldEditor);
     UnloadCampaignSurfaces(game->campaignSurfaces);
     UnloadTerrainMap(&game->editor.terrain);
     UnloadSceneMusic(&game->music);
@@ -820,6 +877,14 @@ static void ShutdownStarter(void *state)
 
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--check-worlds") == 0)
+    {
+        if (argc > 3) return EXIT_FAILURE;
+        const char *directory = argc == 3 ? argv[2] : TextFormat("%sassets/worlds", GetApplicationDirectory());
+        if (!LoadWorldLevels(directory)) return EXIT_FAILURE;
+        printf("Validated %d campaign worlds.\n", WORLD_COUNT);
+        return EXIT_SUCCESS;
+    }
     if (argc > 1 && strcmp(argv[1], "--check-levels") == 0)
     {
         if (argc > 3)
@@ -836,6 +901,7 @@ int main(int argc, char **argv)
     {
         puts("Usage: benno111-engene [model] [diffuse-texture|-] [skybox-strip|-]");
         puts("       benno111-engene --check-levels [directory]");
+        puts("       benno111-engene --check-worlds [directory]");
         return argc > 4 ? EXIT_FAILURE : EXIT_SUCCESS;
     }
     // Use working-directory paths for user assets and executable-relative paths for bundled assets.

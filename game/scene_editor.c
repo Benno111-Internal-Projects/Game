@@ -1,10 +1,7 @@
 #include "scene_editor.h"
 #include "raymath.h"
 #include "ui.h"
-
-#if defined(BENNO_IOS)
-#include <SDL.h>
-#endif
+#include "user_content.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -122,36 +119,6 @@ Camera3D GetEditorCamera(const SceneEditor *editor)
     };
 }
 
-static bool ScenePath(char *path, size_t capacity, bool create)
-{
-#if defined(PLATFORM_ANDROID)
-    // raylib maps this path to the activity's private storage.
-    (void)create;
-    int length = snprintf(path, capacity, "edited-scene.benno");
-#elif defined(BENNO_IOS)
-    (void)create;
-    char *dir = SDL_GetPrefPath("Benno111", "Benno111Engene");
-    if (!dir) return false;
-    int length = snprintf(path, capacity, "%sedited-scene.benno", dir);
-    SDL_free(dir);
-#else
-    char dir[768];
-#if defined(_WIN32)
-    const char *base = getenv("LOCALAPPDATA");
-    int dirLength = snprintf(dir, sizeof(dir), "%s/benno111-engene", base ? base : GetWorkingDirectory());
-#else
-    const char *base = getenv("XDG_DATA_HOME");
-    const char *home = getenv("HOME");
-    int dirLength = base && *base ? snprintf(dir, sizeof(dir), "%s/benno111-engene", base)
-        : snprintf(dir, sizeof(dir), "%s/.local/share/benno111-engene", home ? home : GetWorkingDirectory());
-#endif
-    if (dirLength < 0 || (size_t)dirLength >= sizeof(dir)) return false;
-    if (create && !DirectoryExists(dir) && MakeDirectory(dir) != 0) return false;
-    int length = snprintf(path, capacity, "%s/edited-scene.benno", dir);
-#endif
-    return length >= 0 && (size_t)length < capacity;
-}
-
 static bool EnsureTerrain(SceneEditor *editor)
 {
     if (editor->terrain.mesh.vertices) return true;
@@ -163,7 +130,7 @@ static bool EnsureTerrain(SceneEditor *editor)
 static bool SaveEditedScene(const SceneEditor *editor)
 {
     char path[1024];
-    if (!ScenePath(path, sizeof(path), true)) return false;
+    if (!UserContentPath(path, sizeof(path), "edited-scene.benno", true)) return false;
     char text[EDITOR_MAX_OBJECTS * 160 + TERRAIN_SAMPLES * 20 + 32] = "BENNO-SCENE 2\n";
     size_t used = strlen(text);
     for (int i = 0; i < editor->count; ++i)
@@ -213,7 +180,7 @@ static bool ReadTerrainHeights(const char *text, float heights[TERRAIN_SAMPLES])
 static bool LoadEditedScene(SceneEditor *editor)
 {
     char path[1024];
-    if (!ScenePath(path, sizeof(path), false)) return false;
+    if (!UserContentPath(path, sizeof(path), "edited-scene.benno", false)) return false;
     char *text = LoadFileText(path);
     if (!text) return false;
 
