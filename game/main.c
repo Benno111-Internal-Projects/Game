@@ -578,11 +578,13 @@ static bool UpdateStarter(void *state, float deltaTime)
             return true;
         }
     }
-    game->dropBounds = (Rectangle){ GetScreenWidth() - 128.0f, 8, 116, 25 };
-    game->drop = ReadUiButton(game->dropBounds, pointer, !game->walking);
     bool touch = HasPlayerTouchControls();
-    game->modeBounds = (Rectangle){ game->dropBounds.x - 78.0f, 8, 70, 25 };
-    game->menuBounds = (Rectangle){ game->modeBounds.x - 68.0f, 8, 60, 25 };
+    Vector2 inset = GameUiInset();
+    float buttonWidth = touch ? fminf(100.0f, (GetScreenWidth() - 2 * inset.x - 24) / 4.0f) : 116;
+    game->dropBounds = (Rectangle){ GetScreenWidth() - 12 - inset.x - buttonWidth, 8 + inset.y, buttonWidth, 25 };
+    game->modeBounds = (Rectangle){ game->dropBounds.x - buttonWidth - 8, 8 + inset.y, buttonWidth, 25 };
+    game->menuBounds = (Rectangle){ game->modeBounds.x - buttonWidth - 8, 8 + inset.y, buttonWidth, 25 };
+    game->drop = ReadUiButton(game->dropBounds, pointer, !game->walking);
     game->modeButton = ReadUiButton(game->modeBounds, pointer, touch);
     game->menuButton = ReadUiButton(game->menuBounds, pointer, touch && !game->walking);
     if (!pointer.down) game->pointerCaptured = false;
@@ -810,7 +812,9 @@ static void DrawStarter(const void *state)
         DrawEditorOverlay(&game->editor);
         return;
     }
-    DrawUiPanel((Rectangle){ 0, 0, (float)GetScreenWidth(), 70 }, (Color){ 15, 24, 35, 235 });
+    Vector2 inset = GameUiInset();
+    int left = (int)inset.x + 12, top = (int)inset.y;
+    DrawUiPanel((Rectangle){ 0, 0, (float)GetScreenWidth(), 70 + inset.y }, (Color){ 15, 24, 35, 235 });
     bool touch = HasPlayerTouchControls();
     DrawUiButton(game->dropBounds, touch ? "Drop ball" : "Drop ball [P]", game->drop, !game->walking);
     if (touch)
@@ -818,6 +822,7 @@ static void DrawStarter(const void *state)
         DrawUiButton(game->modeBounds, game->walking ? "Orbit" : "Player", game->modeButton, true);
         if (!game->walking) DrawUiButton(game->menuBounds, "Menu", game->menuButton, true);
     }
+    float headingRight = touch ? (game->walking ? game->modeBounds.x : game->menuBounds.x) : game->dropBounds.x;
     if (CanToggleGameFullscreen())
     {
         const int fontSize = 14;
@@ -825,16 +830,17 @@ static void DrawStarter(const void *state)
             ? "F11 Exit fullscreen" : "F11 Fullscreen";
         int x = (int)game->dropBounds.x - 12 - MeasureText(shortcut, fontSize);
         DrawText(shortcut, x, 14, fontSize, RAYWHITE);
+        headingRight = (float)x;
     }
     const char *heading = touch ? (game->walking ? "Player" : "Orbit")
         : (game->walking ? GAME_WINDOW_TITLE " / Walk" : GAME_WINDOW_TITLE " / Orbit");
-    DrawText(heading, 20, 10, 23, RAYWHITE);
+    DrawUiLabel(heading, left, 10 + top, 23, headingRight - left - 8, RAYWHITE);
     const char *controls = game->walking
         ? "WASD move / Space jump / Shift sprint / Mouse look / R reset / F or Esc orbit"
         : "Drag orbit / Scroll zoom / F player / Esc menu / R reset / Space shader / B sky / G grid";
     if (touch)
         controls = game->walking ? "Move with stick / Swipe to look / Tap Jump" : "Drag to orbit / Tap Player to move";
-    DrawText(controls, 20, 43, 14, (Color){ 195, 214, 230, 255 });
+    DrawUiLabel(controls, left, 43 + top, 14, GetScreenWidth() - 2 * left, (Color){ 195, 214, 230, 255 });
     if (game->walking)
     {
         int x = GetScreenWidth() / 2, y = GetScreenHeight() / 2;
@@ -848,12 +854,13 @@ static void DrawStarter(const void *state)
             return;
         }
     }
-    DrawUiPanel((Rectangle){ 12, GetScreenHeight() - 33.0f, 420, 25 },
-                (Color){ 15, 24, 35, 235 });
-    DrawText(TextFormat("Drawn %d  /  Occluded %d  /  C culling: %s  /  M audio: %s",
-             (int)stats.drawn, (int)stats.occluded, game->occlusionEnabled ? "on" : "off",
-             !StarterAudioAvailable(game) ? "unavailable" : (game->muted ? "off" : "on")),
-             20, GetScreenHeight() - 27, 14, RAYWHITE);
+    float statsWidth = fminf(420, GetScreenWidth() - 2 * left);
+    int statsY = GetScreenHeight() - 33 - top;
+    DrawUiPanel((Rectangle){ (float)left, (float)statsY, statsWidth, 25 }, (Color){ 15, 24, 35, 235 });
+    DrawUiLabel(TextFormat("Drawn %d  /  Occluded %d  /  C culling: %s  /  M audio: %s",
+                (int)stats.drawn, (int)stats.occluded, game->occlusionEnabled ? "on" : "off",
+                !StarterAudioAvailable(game) ? "unavailable" : (game->muted ? "off" : "on")),
+                left + 8, statsY + 6, 14, statsWidth - 16, RAYWHITE);
 }
 
 static void ShutdownStarter(void *state)

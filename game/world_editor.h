@@ -7,7 +7,7 @@
 typedef struct WorldEditor {
     WorldSpec draft;
     Texture2D map;
-    int world, tool, touchId;
+    int world, tool;
     Vector2 lastBrush;
     bool brushing;
     float radius;

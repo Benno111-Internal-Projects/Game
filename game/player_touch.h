@@ -16,6 +16,8 @@ typedef struct PlayerTouchInput {
 } PlayerTouchInput;
 
 bool HasPlayerTouchControls(void);
+Vector2 GameUiInset(void);
+float PlayerTouchTop(void);
 void ResetPlayerTouch(PlayerTouch *touch);
 PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch);
 void DrawPlayerTouch(const PlayerTouch *touch);

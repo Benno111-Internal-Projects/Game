@@ -7,9 +7,11 @@
 
 static Rectangle PickerButton(int world, bool edit)
 {
-    float width = fminf(510, GetScreenWidth() - 32.0f);
-    float step = fminf(45, (GetScreenHeight() - 86.0f) / (WORLD_COUNT + 1));
-    float x = (GetScreenWidth() - width) / 2, y = 53 + world * step;
+    Vector2 inset = GameUiInset();
+    float width = fminf(510, GetScreenWidth() - 32.0f - 2 * inset.x);
+    float top = inset.y;
+    float step = fminf(45, (GetScreenHeight() - 86.0f - 2 * top) / (WORLD_COUNT + 1));
+    float x = (GetScreenWidth() - width) / 2, y = top + 53 + world * step;
     if (edit) return (Rectangle){ x + width - 102, y, 102, step - 3 };
     return (Rectangle){ x, y, width - 109, step - 3 };
 }
@@ -27,7 +29,7 @@ int ReadWorldPicker(InputPointer pointer)
 void DrawWorldPicker(InputPointer pointer)
 {
     const char *title = "Main Campaign";
-    DrawText(title, (GetScreenWidth() - MeasureText(title, 25)) / 2, 15, 25, RAYWHITE);
+    DrawText(title, (GetScreenWidth() - MeasureText(title, 25)) / 2, 15 + (int)GameUiInset().y, 25, RAYWHITE);
     for (int i = 0; i <= WORLD_COUNT; ++i)
     {
         Rectangle play = PickerButton(i, false), edit = PickerButton(i, true);
@@ -52,16 +54,19 @@ static const char *const toolLabels[] = {
 
 static Rectangle MapBounds(void)
 {
-    float side = fminf(GetScreenWidth() * 0.53f - 26, GetScreenHeight() - 100.0f);
-    return (Rectangle){ 18, 65, side, side };
+    Vector2 inset = GameUiInset();
+    float side = fminf((GetScreenWidth() - 2 * inset.x) * 0.53f - 26, GetScreenHeight() - 100.0f - 2 * inset.y);
+    return (Rectangle){ 18 + inset.x, 65 + inset.y, side, side };
 }
 
 static Rectangle ToolBounds(int tool)
 {
-    float left = MapBounds().width + 34;
-    float width = (GetScreenWidth() - left - 24.0f) / 2;
-    float step = fminf(43, (GetScreenHeight() - 83.0f) / 6);
-    return (Rectangle){ left + (tool % 2) * (width + 4), 53 + (tool / 2) * step, width, step - 4 };
+    Rectangle map = MapBounds();
+    Vector2 inset = GameUiInset();
+    float left = map.x + map.width + 16;
+    float width = (GetScreenWidth() - left - inset.x - 24.0f) / 2;
+    float step = fminf(43, (GetScreenHeight() - 83.0f - 2 * inset.y) / 6);
+    return (Rectangle){ left + (tool % 2) * (width + 4), 53 + inset.y + (tool / 2) * step, width, step - 4 };
 }
 
 static void RefreshMap(WorldEditor *editor, const WorldBrush *first, const WorldBrush *last)
@@ -98,8 +103,7 @@ static void RefreshMap(WorldEditor *editor, const WorldBrush *first, const World
 
 bool OpenWorldEditor(WorldEditor *editor, int world)
 {
-    WorldEditor opened = { .world = world, .touchId = -1, .radius = 40 };
-    if (HasPlayerTouchControls() && GetTouchPointCount() > 0) opened.touchId = GetTouchPointId(0);
+    WorldEditor opened = { .world = world, .radius = 40 };
     if (!CopyWorldSpec(&opened.draft, &worlds[world])) return false;
     *editor = opened;
     RefreshMap(editor, NULL, NULL);
@@ -111,30 +115,6 @@ void CloseWorldEditor(WorldEditor *editor)
     if (editor->map.id) UnloadTexture(editor->map);
     FreeWorldSpec(&editor->draft);
     *editor = (WorldEditor){0};
-}
-
-static InputPointer WorldEditorPointer(WorldEditor *editor, InputPointer pointer)
-{
-    if (!HasPlayerTouchControls()) return pointer;
-    int count = GetTouchPointCount();
-    if (count == 0)
-    {
-        if (editor->touchId >= 0) pointer.down = pointer.pressed = false;
-        editor->touchId = -1;
-        return pointer;
-    }
-    bool started = editor->touchId < 0;
-    if (started) editor->touchId = GetTouchPointId(0);
-    pointer.pressed = pointer.down = false;
-    for (int i = 0; i < count; ++i)
-    {
-        if (GetTouchPointId(i) != editor->touchId) continue;
-        pointer.position = GetTouchPosition(i);
-        pointer.down = true;
-        pointer.pressed = started;
-        break;
-    }
-    return pointer;
 }
 
 static void PaintTo(WorldEditor *editor, Vector2 point, bool started)
@@ -167,7 +147,6 @@ static void PaintTo(WorldEditor *editor, Vector2 point, bool started)
 
 bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer)
 {
-    pointer = WorldEditorPointer(editor, pointer);
     for (int i = 0; i < TOOL_COUNT; ++i)
     {
         if (!ReadUiButton(ToolBounds(i), pointer, true).activated) continue;
@@ -228,8 +207,12 @@ void DrawWorldEditor(const WorldEditor *editor, InputPointer pointer)
 {
     Rectangle map = MapBounds();
     const WorldSpec *world = &editor->draft;
-    DrawText(TextFormat("Edit %s", world->name), 18, 14, 20, RAYWHITE);
-    DrawText("Drag or swipe to sculpt. Tap to place markers.", 18, 39, 13, LIGHTGRAY);
+    Vector2 inset = GameUiInset();
+    int left = (int)map.x, top = (int)inset.y;
+    DrawUiLabel(TextFormat("Edit %s", world->name), left, 14 + top, 20,
+                GetScreenWidth() - 2 * left, RAYWHITE);
+    DrawUiLabel("Drag or swipe to sculpt. Tap to place markers.", left, 39 + top, 13,
+                GetScreenWidth() - 2 * left, LIGHTGRAY);
     if (editor->map.id)
         DrawTexturePro(editor->map, (Rectangle){ 0, 0, (float)editor->map.width, (float)editor->map.height },
                        map, Vector2Zero(), 0, WHITE);
@@ -245,8 +228,12 @@ void DrawWorldEditor(const WorldEditor *editor, InputPointer pointer)
         state.hovered |= i == editor->tool;
         DrawUiButton(button, toolLabels[i], state, true);
     }
-    DrawText(TextFormat("Brush %.0f m   %zu edits", editor->radius, world->brushCount),
-             18, (int)(map.y + map.height) + 8, 13, LIGHTGRAY);
+    DrawUiLabel(TextFormat("Brush %.0f m   %zu edits", editor->radius, world->brushCount),
+                left, (int)(map.y + map.height) + 8, 13, map.width, LIGHTGRAY);
     if (editor->status)
-        DrawText(editor->status, (int)ToolBounds(0).x, (int)ToolBounds(TOOL_SAVE).y + 45, 13, GOLD);
+    {
+        Rectangle save = ToolBounds(TOOL_SAVE);
+        DrawUiLabel(editor->status, (int)save.x, (int)(save.y + save.height) + 8, 13,
+                    GetScreenWidth() - save.x - inset.x - 12, GOLD);
+    }
 }

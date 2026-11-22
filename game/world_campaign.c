@@ -220,7 +220,8 @@ void CloseWorldCampaign(WorldCampaign *campaign)
 
 static Rectangle WorldButton(int index)
 {
-    if (index == 0) return (Rectangle){ GetScreenWidth() - 110, 12, 98, 32 };
+    Vector2 inset = GameUiInset();
+    if (index == 0) return (Rectangle){ GetScreenWidth() - 110 - inset.x, 12 + inset.y, 98, 32 };
     return (Rectangle){ GetScreenWidth() * 0.5f - 116, GetScreenHeight() * 0.5f + (index - 1) * 47, 232, 39 };
 }
 
@@ -368,9 +369,12 @@ void DrawWorldCampaignHud(const WorldCampaign *campaign, InputPointer pointer)
         return;
     }
 
-    DrawUiPanel((Rectangle){ 0, 0, (float)width, 80 }, panel);
-    DrawText(TextFormat("%d/%d  %s", campaign->world + 1, WORLD_COUNT, worlds[campaign->world].name),
-             14, 12, 19, RAYWHITE);
+    Vector2 inset = GameUiInset();
+    int left = (int)inset.x + 14, top = (int)inset.y;
+    Rectangle pause = WorldButton(0);
+    DrawUiPanel((Rectangle){ 0, 0, (float)width, 80 + inset.y }, panel);
+    DrawUiLabel(TextFormat("%d/%d  %s", campaign->world + 1, WORLD_COUNT, worlds[campaign->world].name),
+                left, 12 + top, 19, pause.x - left - 8, RAYWHITE);
     Vector2 target = Destination(campaign);
     Vector2 delta = Vector2Subtract(target, (Vector2){ campaign->player.feet.x, campaign->player.feet.z });
     float bearing = atan2f(delta.x, delta.y) - campaign->view.yaw;
@@ -378,8 +382,8 @@ void DrawWorldCampaignHud(const WorldCampaign *campaign, InputPointer pointer)
     const char *turn = fabsf(relative) < 0.20f ? "ahead" : relative > 0 ? "left" : "right";
     const char *objective = campaign->waypoint < WAYPOINT_COUNT ?
         TextFormat("Beacon %d/%d", campaign->waypoint + 1, WAYPOINT_COUNT) : "World gate";
-    DrawText(TextFormat("%s  /  %.0f m  /  %s", objective, Vector2Length(delta), turn), 14, 47, 15, GOLD);
-    Rectangle pause = WorldButton(0);
+    DrawUiLabel(TextFormat("%s  /  %.0f m  /  %s", objective, Vector2Length(delta), turn),
+                left, 47 + top, 15, width - 2 * left, GOLD);
     bool touch = HasPlayerTouchControls();
     DrawUiButton(pause, touch ? "Pause" : "Esc Pause", ReadUiButton(pause, pointer, touch), true);
     if (touch) DrawPlayerTouch(&campaign->touch);

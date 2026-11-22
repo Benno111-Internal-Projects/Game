@@ -681,7 +681,8 @@ static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
             float flicker = TorchFlicker(flame, time);
             Vector3 tip = { flame.x + 0.05f * sinf(time * 15.0f + flame.z),
                             flame.y + 0.36f * flicker, flame.z };
-            DrawCylinderEx(base, tip, 0.14f, 0.015f, 7, ORANGE);
+            Vector3 wick = Vector3Add(base, (Vector3){ 0, 0.101f, 0 });
+            DrawCylinderEx(wick, tip, 0.12f, 0.015f, 7, ORANGE);
             DrawSphereEx(flame, 0.09f * flicker, 5, 7, YELLOW);
         }
 }
@@ -748,7 +749,6 @@ static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
     Color phaseColor = ColorLerp(boss->color, ORANGE, campaign->bossPhase * 0.26f);
     Color body = campaign->guardTimer > 0 ? RAYWHITE : phaseColor;
     DrawCylinder(center, boss->radius * 0.76f, boss->radius, boss->height, 12, body);
-    DrawCylinderWires(center, boss->radius * 0.76f, boss->radius, boss->height, 12, DARKGRAY);
     Vector3 core = center;
     core.y += boss->height * 0.96f;
     DrawSphereEx(core, boss->radius * 0.32f, 8, 12, RAYWHITE);
@@ -771,11 +771,6 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
     DrawCube((Vector3){ gate.x - 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
     DrawCube((Vector3){ gate.x + 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
     DrawCube((Vector3){ gate.x, gate.y + 2.2f, gate.z }, 1.86f, 0.21f, 0.26f, frame);
-    if (!CurrentBoss(campaign))
-    {
-        DrawCube((Vector3){ gate.x, gate.y + 1.05f, gate.z }, 1.45f, 2.08f, 0.055f, Fade(frame, 0.44f));
-        DrawCubeWires((Vector3){ gate.x, gate.y + 1.05f, gate.z }, 1.45f, 2.08f, 0.08f, RAYWHITE);
-    }
     for (int side = -1; side <= 1; side += 2)
     {
         float x = side < 0 ? arena.min.x - 0.55f : arena.max.x + 0.55f;
@@ -788,11 +783,29 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
     if (boss) DrawBossModel(campaign, boss);
     for (int i = 0; i < CAMPAIGN_MAX_ORBS; ++i)
         if (campaign->orbs[i].life > 0) DrawSphereEx(campaign->orbs[i].position, 0.18f, 5, 8, ORANGE);
+    if (!boss)
+    {
+        Vector3 panel = { gate.x, gate.y + 1.05f, gate.z };
+        rlDrawRenderBatchActive();
+        rlDisableDepthMask();
+        rlDisableBackfaceCulling();
+        DrawTriangle3D((Vector3){ panel.x - 0.725f, panel.y - 1.04f, panel.z },
+                       (Vector3){ panel.x + 0.725f, panel.y - 1.04f, panel.z },
+                       (Vector3){ panel.x + 0.725f, panel.y + 1.04f, panel.z }, Fade(frame, 0.44f));
+        DrawTriangle3D((Vector3){ panel.x - 0.725f, panel.y - 1.04f, panel.z },
+                       (Vector3){ panel.x + 0.725f, panel.y + 1.04f, panel.z },
+                       (Vector3){ panel.x - 0.725f, panel.y + 1.04f, panel.z }, Fade(frame, 0.44f));
+        rlDrawRenderBatchActive();
+        rlEnableBackfaceCulling();
+        rlEnableDepthMask();
+        DrawCubeWires(panel, 1.45f, 2.08f, 0.08f, RAYWHITE);
+    }
 }
 
 static Rectangle MenuBounds(void)
 {
-    return (Rectangle){ GetScreenWidth() - 111.0f, 12, 99, 29 };
+    Vector2 inset = GameUiInset();
+    return (Rectangle){ GetScreenWidth() - 111.0f - inset.x, 12 + inset.y, 99, 29 };
 }
 
 bool ReadCampaignMenu(InputPointer pointer)
@@ -867,7 +880,16 @@ static void DrawMazeMap(const Campaign *campaign)
     const LevelSpec *level = CurrentLevel(campaign);
     if (!level->mazeRows || campaign->checkpoint) return;
 
+    Vector2 inset = GameUiInset();
+    int y = (int)inset.y + 106;
     int maxSize = GetScreenHeight() < 480 ? 94 : 144;
+    if (HasPlayerTouchControls())
+    {
+        // Keep the map clear of the crosshair and the jump button.
+        maxSize = (int)fminf(maxSize, PlayerTouchTop() - y - 14);
+        maxSize = (int)fminf(maxSize, GetScreenWidth() * 0.5f - inset.x - 36);
+    }
+    if (maxSize < 28) return;
     int longest = level->mazeRows > level->mazeCols ? level->mazeRows : level->mazeCols;
     int unit = maxSize / longest;
     int visibleRows = level->mazeRows, visibleCols = level->mazeCols;
@@ -884,7 +906,7 @@ static void DrawMazeMap(const Campaign *campaign)
     }
 
     int width = visibleCols * unit, height = visibleRows * unit;
-    int x = GetScreenWidth() - width - 20, y = 106;
+    int x = GetScreenWidth() - width - 20 - (int)inset.x;
     DrawUiPanel((Rectangle){ (float)x - 6, (float)y - 20, (float)width + 12, (float)height + 26 },
                 (Color){ 12, 20, 29, 223 });
     DrawText("N", x, y - 16, 11, RAYWHITE);
@@ -909,28 +931,34 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
         DrawCampaignDeath(campaign, pointer);
         return;
     }
+    if (campaign->paused)
+    {
+        DrawCampaignPause(campaign, pointer);
+        return;
+    }
     const LevelSpec *level = CurrentLevel(campaign);
     int width = GetScreenWidth(), height = GetScreenHeight();
+    Vector2 inset = GameUiInset();
+    int hudX = (int)inset.x, hudY = (int)inset.y;
+    int hudBottom = 79 + hudY;
     const Color panel = { 15, 24, 35, 234 };
-    DrawUiPanel((Rectangle){ 0, 0, (float)width, 79 }, panel);
+    DrawUiPanel((Rectangle){ 0, 0, (float)width, (float)hudBottom }, panel);
     const char *heading = campaign->endlessLevel ? level->name :
         TextFormat("%d / %d   %s", campaign->level + 1, CAMPAIGN_LEVEL_COUNT, level->name);
-    DrawText(heading, 16, 12, 20, RAYWHITE);
+    DrawUiLabel(heading, 16 + hudX, 12 + hudY, 20, MenuBounds().x - 24 - hudX, RAYWHITE);
     if (campaign->endlessLevel)
         DrawText(TextFormat("Lives %d    %d x %d", campaign->lives, level->mazeCols, level->mazeRows),
-                 96, 31, 13, level->trim);
+                 96 + hudX, 31 + hudY, 13, level->trim);
     else if (!campaign->debugRun)
-        DrawText(TextFormat("Lives %d", campaign->lives), 96, 31, 13, level->trim);
+        DrawText(TextFormat("Lives %d", campaign->lives), 96 + hudX, 31 + hudY, 13, level->trim);
     for (int i = 0; i < 3; ++i)
-        DrawRectangle(18 + 23 * i, 51, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
+        DrawRectangle(18 + hudX + 23 * i, 51 + hudY, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
     const BossSpec *boss = CurrentBoss(campaign);
     const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Explore the maze" : "Reach the arena")
         : boss ? TextFormat("Stomp %s  %d/%d  /  Phase %d/%d", boss->name, campaign->bossHealth, boss->health,
                             campaign->bossPhase + 1, boss->phaseCount)
                : "Exit open";
-    int objectiveSize = 15;
-    while (objectiveSize > 9 && MeasureText(objective, objectiveSize) > width - 103) --objectiveSize;
-    DrawText(objective, 96, 48, objectiveSize, RAYWHITE);
+    DrawUiLabel(objective, 96 + hudX, 48 + hudY, 15, width - 104 - 2 * hudX, RAYWHITE);
     bool touch = HasPlayerTouchControls();
     const char *back = (campaign->cleared || campaign->gameOver) ? (campaign->debugRun ? "Levels" : "Mazes")
                                         : (touch ? "Pause" : "Esc Pause");
@@ -938,7 +966,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
 
     if (campaign->cleared || campaign->gameOver)
     {
-        DrawRectangle(0, 79, width, height - 79, (Color){ 8, 15, 24, 225 });
+        DrawRectangle(0, hudBottom, width, height - hudBottom, (Color){ 8, 15, 24, 225 });
         const char *message = campaign->gameOver ? "Game over" : (campaign->debugRun ? "Level clear" : "Mazes complete");
         DrawText(message, (width - MeasureText(message, 33)) / 2, height / 2 - 30, 33, level->trim);
         const char *prompt = campaign->debugRun ? "Return to level select" : "All nine bosses defeated";
@@ -955,15 +983,10 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     }
 
     DrawMazeMap(campaign);
-    if (campaign->paused)
-    {
-        DrawCampaignPause(campaign, pointer);
-        return;
-    }
     if (campaign->phaseNotice > 0)
     {
         const char *label = TextFormat("Phase %d", campaign->bossPhase + 1);
-        DrawText(label, (width - MeasureText(label, 24)) / 2, 105, 24, GOLD);
+        DrawText(label, (width - MeasureText(label, 24)) / 2, 105 + hudY, 24, GOLD);
     }
     int x = width / 2, y = height / 2;
     DrawLine(x - 4, y, x + 4, y, RAYWHITE);

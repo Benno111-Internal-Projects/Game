@@ -1,5 +1,6 @@
 #include "scene_editor.h"
 #include "raymath.h"
+#include "player_touch.h"
 #include "ui.h"
 #include "user_content.h"
 
@@ -47,17 +48,18 @@ static EditorCommand EditorButtonCommand(const SceneEditor *editor, int slot)
 
 static Rectangle EditorPanel(void)
 {
+    Vector2 inset = GameUiInset();
     float width = fminf(330.0f, GetScreenWidth() * 0.47f);
-    return (Rectangle){ GetScreenWidth() - width, 0, width, (float)GetScreenHeight() };
+    return (Rectangle){ GetScreenWidth() - width - inset.x, inset.y, width, GetScreenHeight() - 2 * inset.y };
 }
 
 static Rectangle CommandBounds(Rectangle panel, int slot)
 {
     float gap = panel.width < 230.0f ? 3.0f : 6.0f;
     float width = (panel.width - 4.0f * gap) / 3.0f;
-    float row = Clamp((panel.height - 110.0f) / 8.0f, 20.0f, 48.0f);
+    float row = fminf((panel.height - 124.0f) / 8.0f, 48.0f);
     return (Rectangle){ panel.x + gap + (slot % 3) * (width + gap),
-                        61.0f + (slot / 3) * row, width, row - 3.0f };
+                        panel.y + 61.0f + (slot / 3) * row, width, row - 3.0f };
 }
 
 static bool CommandEnabled(const SceneEditor *editor, EditorCommand command)
@@ -442,14 +444,15 @@ void DrawEditorOverlay(const SceneEditor *editor)
 {
     Rectangle panel = EditorPanel();
     DrawUiPanel(panel, (Color){ 15, 24, 35, 247 });
-    DrawText("Scene Editor", (int)panel.x + 10, 10, 22, RAYWHITE);
+    int left = (int)panel.x + 10;
+    DrawUiLabel("Scene Editor", left, (int)panel.y + 10, 22, panel.width - 20, RAYWHITE);
     const char *selection = editor->selected >= 0
         ? TextFormat("Object %d of %d", editor->selected + 1, editor->count)
         : TextFormat("%d objects  /  none selected", editor->count);
     const char *const tools[] = { "Raise", "Lower", "Level", "Orbit" };
     if (editor->terrainMode)
         selection = TextFormat("%s  /  Radius %.2f", tools[editor->brush], editor->brushRadius);
-    DrawText(selection, (int)panel.x + 10, 38, 14, LIGHTGRAY);
+    DrawUiLabel(selection, left, (int)panel.y + 38, 14, panel.width - 20, LIGHTGRAY);
     InputPointer pointer = { .position = editor->pointer };
     int buttons = EditorButtonCount(editor);
     for (int i = 0; i < buttons; ++i)
@@ -465,15 +468,17 @@ void DrawEditorOverlay(const SceneEditor *editor)
     if (!editor->terrainMode && editor->selected >= 0)
     {
         PrefabInstance instance = editor->entries[editor->selected].instance;
-        DrawText(TextFormat("X %.2f   Y %.2f   Z %.2f", instance.position.x, instance.position.y, instance.position.z),
-                 (int)panel.x + 10, y, 13, LIGHTGRAY);
-        DrawText(TextFormat("Turn %.0f   Scale %.2f", instance.yawDegrees, instance.scale),
-                 (int)panel.x + 10, y + 17, 13, LIGHTGRAY);
+        DrawUiLabel(TextFormat("X %.2f   Y %.2f   Z %.2f", instance.position.x, instance.position.y, instance.position.z),
+                    left, y, 13, panel.width - 20, LIGHTGRAY);
+        DrawUiLabel(TextFormat("Turn %.0f   Scale %.2f", instance.yawDegrees, instance.scale),
+                    left, y + 17, 13, panel.width - 20, LIGHTGRAY);
     }
     if (editor->status)
-        DrawText(editor->status, (int)panel.x + 10, y + (editor->terrainMode ? 0 : 34), 13, RAYWHITE);
+        DrawUiLabel(editor->status, left, y + (editor->terrainMode ? 0 : 34), 13, panel.width - 20, RAYWHITE);
     const char *hint = editor->terrainMode
         ? (editor->brush == TERRAIN_ORBIT ? "Drag to orbit" : "Hold and drag to sculpt")
         : "Tap to select / Drag to orbit";
-    DrawText(hint, 12, GetScreenHeight() - 23, 14, RAYWHITE);
+    Vector2 inset = GameUiInset();
+    DrawUiLabel(hint, (int)inset.x + 12, GetScreenHeight() - 23 - (int)inset.y, 14,
+                panel.x - inset.x - 20, RAYWHITE);
 }
