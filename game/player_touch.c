@@ -1,4 +1,5 @@
 #include "player_touch.h"
+#include "input.h"
 #include "raymath.h"
 
 bool HasPlayerTouchControls(void)
@@ -59,12 +60,13 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
     bool stickHeld = false, lookHeld = false, jumpHeld = false;
     float radius = ControlRadius();
     Vector2 stickCenter = StickCenter(radius);
-    int count = GetTouchPointCount();
-    for (int i = 0; i < count; ++i)
+    const InputTouch *points;
+    size_t count = GetInputTouches(&points);
+    for (size_t i = 0; i < count; ++i)
     {
-        int id = GetTouchPointId(i);
-        if (id == -1) continue;
-        Vector2 position = GetTouchPosition(i);
+        if (!points[i].down) continue;
+        int id = points[i].id;
+        Vector2 position = points[i].position;
         if (id == touch->stickId)
         {
             stickHeld = true;
@@ -82,11 +84,17 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
     if (!lookHeld) touch->lookId = -1;
     if (!jumpHeld) touch->jumpId = -1;
 
-    for (int i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
     {
-        int id = GetTouchPointId(i);
-        if (id == -1 || id == touch->stickId || id == touch->lookId || id == touch->jumpId) continue;
-        Vector2 position = GetTouchPosition(i);
+        int id = points[i].id;
+        if (id == touch->stickId || id == touch->lookId || id == touch->jumpId) continue;
+        Vector2 position = points[i].position;
+        if (!points[i].down)
+        {
+            if (points[i].pressed && CheckCollisionPointCircle(position, JumpCenter(radius), radius + 8))
+                input.jumpPressed = true;
+            continue;
+        }
         if (touch->stickId == -1 && CheckCollisionPointCircle(position, stickCenter, radius + 14))
         {
             touch->stickId = id;

@@ -770,7 +770,7 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
     DrawCube((Vector3){ gate.x - 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
     DrawCube((Vector3){ gate.x + 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
-    DrawCube((Vector3){ gate.x, gate.y + 2.2f, gate.z }, 1.86f, 0.21f, 0.26f, frame);
+    DrawCube((Vector3){ gate.x, gate.y + 2.305f, gate.z }, 1.86f, 0.21f, 0.26f, frame);
     for (int side = -1; side <= 1; side += 2)
     {
         float x = side < 0 ? arena.min.x - 0.55f : arena.max.x + 0.55f;

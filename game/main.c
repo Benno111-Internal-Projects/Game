@@ -937,6 +937,17 @@ int main(int argc, char **argv)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(1100, 720, GAME_WINDOW_TITLE);
     if (!IsWindowReady()) return EXIT_FAILURE;
+#if defined(BENNO_IOS)
+    // Spend more of the depth buffer on the actual viewable scene.
+    // The farthest streamed terrain corners are within 272 units of the player.
+    rlSetClipPlanes(0.12, 320.0);
+#endif
+    if (!InitInputTouches())
+    {
+        TraceLog(LOG_ERROR, "Could not initialize native touch input");
+        CloseWindow();
+        return EXIT_FAILURE;
+    }
     SetWindowMinSize(640, 360);
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
@@ -950,6 +961,7 @@ int main(int argc, char **argv)
     };
     bool success = RunGameLoop(logic, &game);
     if (!success) TraceLog(LOG_ERROR, "Could not initialize campaign levels or game assets");
+    CloseInputTouches();
     CloseWindow();
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

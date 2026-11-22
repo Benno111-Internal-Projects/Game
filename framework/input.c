@@ -1,5 +1,35 @@
 #include "input.h"
 
+#if defined(RENDER_FRAMEWORK_IOS)
+#include "ios_touch.h"
+#endif
+
+static InputTouch touches[INPUT_TOUCH_CAPACITY];
+static size_t touchCount;
+
+bool InitInputTouches(void)
+{
+#if defined(RENDER_FRAMEWORK_IOS)
+    return InitIosTouch();
+#else
+    return true;
+#endif
+}
+
+void CloseInputTouches(void)
+{
+#if defined(RENDER_FRAMEWORK_IOS)
+    CloseIosTouch();
+#endif
+    touchCount = 0;
+}
+
+size_t GetInputTouches(const InputTouch **points)
+{
+    *points = touches;
+    return touchCount;
+}
+
 InputPointer PollInput(const int *keys, InputAction *actions, size_t count)
 {
     for (size_t i = 0; i < count; ++i)
@@ -19,24 +49,38 @@ InputPointer PollInput(const int *keys, InputAction *actions, size_t count)
     static int activeTouch;
     static bool trackingTouch;
     static Vector2 lastTouch;
-    int touches = GetTouchPointCount();
-    if (touches > 0)
+#if defined(RENDER_FRAMEWORK_IOS)
+    touchCount = ReadIosTouch(touches, INPUT_TOUCH_CAPACITY);
+#else
+    int total = GetTouchPointCount();
+    touchCount = 0;
+    for (int i = 0; i < total && touchCount < INPUT_TOUCH_CAPACITY; ++i)
+    {
+        int id = GetTouchPointId(i);
+        if (id == -1) continue;
+        touches[touchCount++] = (InputTouch){ .id = id, .position = GetTouchPosition(i), .down = true };
+    }
+#endif
+    if (touchCount > 0)
     {
         bool started = !trackingTouch;
-        if (started) activeTouch = GetTouchPointId(0);
+        if (started) activeTouch = touches[0].id;
         trackingTouch = true;
         pointer = (InputPointer){ .position = lastTouch };
-        for (int i = 0; i < touches; ++i)
+        bool anyDown = false;
+        for (size_t i = 0; i < touchCount; ++i)
         {
-            if (GetTouchPointId(i) != activeTouch) continue;
-            pointer.position = GetTouchPosition(i);
+            const InputTouch *touch = &touches[i];
+            anyDown |= touch->down;
+            if (touch->id != activeTouch) continue;
+            pointer.position = touch->position;
             pointer.delta = started ? (Vector2){0} :
                 (Vector2){ pointer.position.x - lastTouch.x, pointer.position.y - lastTouch.y };
             pointer.pressed = started;
-            pointer.down = true;
+            pointer.down = touch->down;
             lastTouch = pointer.position;
-            break;
         }
+        trackingTouch = anyDown;
     }
     else if (trackingTouch)
     {
