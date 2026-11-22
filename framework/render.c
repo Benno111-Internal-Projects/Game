@@ -49,6 +49,7 @@ static TextureCubemap LoadSky(const char *path)
 
 void DrawSky(Model sky, Vector3 cameraPosition)
 {
+    rlDrawRenderBatchActive();
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
     DrawModel(sky, cameraPosition, 1.0f, WHITE);

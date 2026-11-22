@@ -5,5 +5,6 @@ varying mediump vec3 direction;
 
 void main() {
     direction = vertexPosition;
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    vec4 projected = mvp * vec4(vertexPosition, 1.0);
+    gl_Position = projected.xyww;
 }
