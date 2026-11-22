@@ -63,20 +63,30 @@ static Rectangle ToolBounds(int tool)
     return (Rectangle){ left + (tool % 2) * (width + 4), 53 + (tool / 2) * step, width, step - 4 };
 }
 
-static void RefreshMap(WorldEditor *editor)
+static void RefreshMap(WorldEditor *editor, const WorldBrush *brush)
 {
     enum { PREVIEW_SIDE = 128 };
     Color pixels[PREVIEW_SIDE * PREVIEW_SIDE];
     const WorldSpec *world = &editor->draft;
     float scale = (float)WORLD_SIDE / PREVIEW_SIDE;
-    for (int row = 0; row < PREVIEW_SIDE; ++row)
-        for (int col = 0; col < PREVIEW_SIDE; ++col)
+    int left = 0, top = 0, right = PREVIEW_SIDE, bottom = PREVIEW_SIDE;
+    if (editor->map.id && brush)
+    {
+        left = (int)fmaxf(0, floorf((brush->center.x - brush->radius) / scale));
+        top = (int)fmaxf(0, floorf((brush->center.y - brush->radius) / scale));
+        right = (int)fminf(PREVIEW_SIDE, ceilf((brush->center.x + brush->radius) / scale));
+        bottom = (int)fminf(PREVIEW_SIDE, ceilf((brush->center.y + brush->radius) / scale));
+    }
+    int width = right - left;
+    for (int row = top; row < bottom; ++row)
+        for (int col = left; col < right; ++col)
         {
             float h = WorldHeight(world, (col + 0.5f) * scale, (row + 0.5f) * scale);
             float tone = Clamp(0.5f + h / (2 * fmaxf(world->relief, 5)), 0, 1);
-            pixels[row * PREVIEW_SIDE + col] = ColorLerp(world->low, world->high, tone);
+            pixels[(row - top) * width + col - left] = ColorLerp(world->low, world->high, tone);
         }
-    if (editor->map.id) UpdateTexture(editor->map, pixels);
+    if (editor->map.id)
+        UpdateTextureRec(editor->map, (Rectangle){ (float)left, (float)top, (float)width, (float)(bottom - top) }, pixels);
     else
     {
         editor->map = LoadTextureFromImage((Image){ pixels, PREVIEW_SIDE, PREVIEW_SIDE, 1,
@@ -85,15 +95,19 @@ static void RefreshMap(WorldEditor *editor)
     }
 }
 
-void OpenWorldEditor(WorldEditor *editor, int world)
+bool OpenWorldEditor(WorldEditor *editor, int world)
 {
-    *editor = (WorldEditor){ .draft = worlds[world], .world = world, .radius = 40 };
-    RefreshMap(editor);
+    WorldEditor opened = { .world = world, .radius = 40 };
+    if (!CopyWorldSpec(&opened.draft, &worlds[world])) return false;
+    *editor = opened;
+    RefreshMap(editor, NULL);
+    return true;
 }
 
 void CloseWorldEditor(WorldEditor *editor)
 {
     if (editor->map.id) UnloadTexture(editor->map);
+    FreeWorldSpec(&editor->draft);
     *editor = (WorldEditor){0};
 }
 
@@ -102,14 +116,13 @@ static void EditPoint(WorldEditor *editor, Vector2 point)
     WorldSpec *world = &editor->draft;
     if (editor->tool == TOOL_RAISE || editor->tool == TOOL_LOWER)
     {
-        if (world->brushCount == WORLD_MAX_BRUSHES)
+        float height = editor->tool == TOOL_RAISE ? 3 : -3;
+        if (!AddWorldBrush(world, (WorldBrush){ point, editor->radius, height }))
         {
-            editor->status = "Brush limit reached";
+            editor->status = "Could not allocate terrain edit";
             return;
         }
-        float height = editor->tool == TOOL_RAISE ? 3 : -3;
-        world->brushes[world->brushCount++] = (WorldBrush){ point, editor->radius, height };
-        RefreshMap(editor);
+        RefreshMap(editor, &world->brushes[world->brushCount - 1]);
     }
     else if (editor->tool == TOOL_SPAWN) world->spawn = point;
     else if (editor->tool == TOOL_GATE) world->gate = point;
@@ -130,7 +143,7 @@ bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer)
         {
             --editor->draft.brushCount;
             editor->status = "Unsaved changes";
-            RefreshMap(editor);
+            RefreshMap(editor, &editor->draft.brushes[editor->draft.brushCount]);
         }
         else if (i == TOOL_SAVE)
         {
@@ -180,7 +193,7 @@ void DrawWorldEditor(const WorldEditor *editor, InputPointer pointer)
         state.hovered |= i == editor->tool;
         DrawUiButton(button, toolLabels[i], state, true);
     }
-    DrawText(TextFormat("Brush %.0f m   %d/%d edits", editor->radius, world->brushCount, WORLD_MAX_BRUSHES),
+    DrawText(TextFormat("Brush %.0f m   %zu edits", editor->radius, world->brushCount),
              18, (int)(map.y + map.height) + 8, 13, LIGHTGRAY);
     if (editor->status)
         DrawText(editor->status, (int)ToolBounds(0).x, (int)ToolBounds(TOOL_SAVE).y + 45, 13, GOLD);

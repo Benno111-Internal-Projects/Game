@@ -16,7 +16,7 @@ enum { WORLD_PICK_NONE = -1, WORLD_PICK_FULL = 2 * WORLD_COUNT, WORLD_PICK_BACK 
 
 int ReadWorldPicker(InputPointer pointer);
 void DrawWorldPicker(InputPointer pointer);
-void OpenWorldEditor(WorldEditor *editor, int world);
+bool OpenWorldEditor(WorldEditor *editor, int world);
 void CloseWorldEditor(WorldEditor *editor);
 bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer);
 void DrawWorldEditor(const WorldEditor *editor, InputPointer pointer);

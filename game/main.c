@@ -448,9 +448,12 @@ static bool UpdateStarter(void *state, float deltaTime)
             if (choice == WORLD_PICK_NONE && actions[ACTION_START].pressed) choice = WORLD_PICK_FULL;
             if (choice >= 0 && choice < WORLD_PICK_FULL && choice % 2)
             {
-                OpenWorldEditor(&game->worldEditor, choice / 2);
-                game->worldEditorOpen = true;
-                game->worldPickerOpen = false;
+                if (OpenWorldEditor(&game->worldEditor, choice / 2))
+                {
+                    game->worldEditorOpen = true;
+                    game->worldPickerOpen = false;
+                }
+                else TraceLog(LOG_ERROR, "Could not allocate world editor draft");
             }
             else if (choice >= 0)
             {
@@ -858,6 +861,7 @@ static void ShutdownStarter(void *state)
     StarterGame *game = state;
     CloseWorldCampaign(&game->worlds);
     CloseWorldEditor(&game->worldEditor);
+    UnloadWorldLevels();
     UnloadCampaignSurfaces(game->campaignSurfaces);
     UnloadTerrainLayers(&game->terrainLayers);
     UnloadTerrainMap(&game->editor.terrain);
@@ -890,6 +894,7 @@ int main(int argc, char **argv)
         const char *directory = argc == 3 ? argv[2] : TextFormat("%sassets/worlds", GetApplicationDirectory());
         if (!LoadWorldLevels(directory)) return EXIT_FAILURE;
         printf("Validated %d campaign worlds.\n", WORLD_COUNT);
+        UnloadWorldLevels();
         return EXIT_SUCCESS;
     }
     if (argc > 1 && strcmp(argv[1], "--check-levels") == 0)
