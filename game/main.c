@@ -17,6 +17,7 @@
 #include "ui.h"
 #include "title_screen.h"
 #include "window.h"
+#include "world_campaign.h"
 #include "scene.h"
 #include "scene_editor.h"
 #include "scene_music.h"
@@ -128,8 +129,9 @@ typedef struct StarterGame {
     BallDrawData ballDraw;
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
     PrefabInstance ballInstance, titleModel;
-    bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen;
+    bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen;
     Campaign campaign;
+    WorldCampaign worlds;
     LevelSpec endlessLevel;
     CampaignSurfaces campaignSurfaces;
     SceneEditor editor;
@@ -404,6 +406,25 @@ static bool UpdateStarter(void *state, float deltaTime)
     InputPointer pointer = PollInput(gameKeys, actions, ACTION_COUNT);
     if (actions[ACTION_FULLSCREEN].pressed) ToggleGameFullscreen();
     if (actions[ACTION_MUTE].pressed) game->muted = !game->muted;
+    if (game->worldOpen)
+    {
+        game->titlePointer = pointer.position;
+        Vector2 movement = {
+            (float)(actions[ACTION_RIGHT].down - actions[ACTION_LEFT].down),
+            (float)(actions[ACTION_FORWARD].down - actions[ACTION_BACK].down),
+        };
+        if (!UpdateWorldCampaign(&game->worlds, pointer, movement, actions[ACTION_SPACE].pressed,
+                                 actions[ACTION_SPRINT].down, actions[ACTION_RESET].pressed,
+                                 actions[ACTION_EXIT].pressed, actions[ACTION_START].pressed, deltaTime))
+        {
+            CloseWorldCampaign(&game->worlds);
+            if (!HasPlayerTouchControls()) EnableCursor();
+            game->worldOpen = false;
+            game->titleOpen = true;
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->campaignOpen)
     {
         game->titlePointer = pointer.position;
@@ -475,7 +496,19 @@ static bool UpdateStarter(void *state, float deltaTime)
             UpdateStarterAudio(game);
             return true;
         }
-        if (action == TITLE_MAZES || actions[ACTION_START].pressed)
+        if (action == TITLE_CAMPAIGN || actions[ACTION_START].pressed)
+        {
+            if (OpenWorldCampaign(&game->worlds))
+            {
+                game->worldOpen = true;
+                game->titleOpen = false;
+                if (!HasPlayerTouchControls()) DisableCursor();
+            }
+            else TraceLog(LOG_ERROR, "Could not allocate campaign terrain cache");
+            UpdateStarterAudio(game);
+            return true;
+        }
+        if (action == TITLE_MAZES)
         {
             game->titleOpen = false;
             game->mazesOpen = true;
@@ -655,6 +688,15 @@ static void DrawStarter(const void *state)
 {
     const StarterGame *game = state;
     ClearBackground((Color){ 29, 42, 54, 255 });
+    if (game->worldOpen)
+    {
+        BeginMode3D(game->worlds.camera);
+        DrawSky(game->sky, game->worlds.camera.position);
+        DrawWorldLandscape(&game->worlds);
+        EndMode3D();
+        DrawWorldCampaignHud(&game->worlds, (InputPointer){ .position = game->titlePointer });
+        return;
+    }
     if (game->campaignOpen)
     {
         BeginMode3D(game->campaign.camera);
@@ -752,6 +794,7 @@ static void DrawStarter(const void *state)
 static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
+    CloseWorldCampaign(&game->worlds);
     UnloadCampaignSurfaces(game->campaignSurfaces);
     UnloadTerrainMap(&game->editor.terrain);
     UnloadSceneMusic(&game->music);

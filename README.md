@@ -22,6 +22,20 @@ With a multi-config generator, look for the executable and its asset folders in 
 On desktop, **F11** switches between borderless fullscreen and the previous window
 size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
+## Main Campaign
+
+Choose **Main Campaign** or press **Enter** on the title screen. The route
+crosses Willow Basin, Copper Dunes, Rainmire, Windbreak Highlands, Ember Expanse,
+Frostglass Range, and Crown Plateau. Activate three beacons in each world, then
+follow the heading in the HUD to the world gate. The last beacon reached is
+your checkpoint. **R** retries it, and **Esc** opens the pause menu. Mobile uses
+the on-screen movement stick, look gesture, Jump, and Pause controls.
+
+Every world spans 1,024 × 1,024 units and uses 32 × 32-unit terrain chunks.
+The landscape builds nearby chunks as they enter the camera view and frees
+chunks left behind. Collision samples the same terrain grid, including
+terrain beyond the current view.
+
 ## Mazes bonus mode
 
 Choose **Mazes** on the title screen. **Classic** has seven authored mazes and

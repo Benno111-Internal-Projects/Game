@@ -5,6 +5,7 @@
 
 typedef enum TitleAction {
     TITLE_NONE,
+    TITLE_CAMPAIGN,
     TITLE_MAZES,
     TITLE_DEBUG,
     TITLE_SANDBOX,

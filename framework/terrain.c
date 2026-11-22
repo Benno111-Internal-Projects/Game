@@ -3,15 +3,29 @@
 #include <math.h>
 #include <stddef.h>
 
-static const float spacing = 0.625f;
-static const float edge = 10.0f;
+static const Vector2 editorOrigin = { -10.0f, -10.0f };
+static const float editorSpacing = 0.625f;
 static const Color low = { 68, 91, 74, 255 };
 static const Color high = { 156, 186, 122, 255 };
 
 static Vector3 SamplePoint(const TerrainMap *map, int x, int z)
 {
-    return (Vector3){ x * spacing - edge, map->baseHeight + map->heights[z * TERRAIN_SIDE + x],
-                      z * spacing - edge };
+    Vector2 origin = map->source ? map->origin : editorOrigin;
+    float spacing = map->source ? map->spacing : editorSpacing;
+    return (Vector3){ origin.x + x * spacing, map->baseHeight + map->heights[z * TERRAIN_SIDE + x],
+                      origin.y + z * spacing };
+}
+
+static Vector3 NeighborPoint(const TerrainMap *map, int x, int z)
+{
+    if (x >= 0 && x < TERRAIN_SIDE && z >= 0 && z < TERRAIN_SIDE) return SamplePoint(map, x, z);
+    if (map->source)
+    {
+        Vector3 point = { map->origin.x + x * map->spacing, 0, map->origin.y + z * map->spacing };
+        point.y = map->source(map->sourceData, point.x, point.z);
+        return point;
+    }
+    return SamplePoint(map, (int)Clamp(x, 0, TERRAIN_SIDE - 1), (int)Clamp(z, 0, TERRAIN_SIDE - 1));
 }
 
 static void FillVertices(TerrainMap *map)
@@ -27,13 +41,18 @@ static void FillVertices(TerrainMap *map)
             map->mesh.vertices[i * 3 + 1] = point.y;
             map->mesh.vertices[i * 3 + 2] = point.z;
 
-            Vector3 dx = Vector3Subtract(SamplePoint(map, x < TERRAIN_SIDE - 1 ? x + 1 : x, z),
-                                         SamplePoint(map, x > 0 ? x - 1 : x, z));
-            Vector3 dz = Vector3Subtract(SamplePoint(map, x, z < TERRAIN_SIDE - 1 ? z + 1 : z),
-                                         SamplePoint(map, x, z > 0 ? z - 1 : z));
+            Vector3 dx = Vector3Subtract(NeighborPoint(map, x + 1, z), NeighborPoint(map, x - 1, z));
+            Vector3 dz = Vector3Subtract(NeighborPoint(map, x, z + 1), NeighborPoint(map, x, z - 1));
             Vector3 normal = Vector3Normalize(Vector3CrossProduct(dz, dx));
             float shade = 0.42f + 0.58f * fmaxf(Vector3DotProduct(normal, light), 0.0f);
-            Color color = ColorLerp(low, high, Clamp((map->heights[i] + 2.0f) / 6.0f, 0.0f, 1.0f));
+            float elevation = (map->heights[i] + 2.0f) / 6.0f;
+            if (map->source)
+            {
+                elevation = 0.5f + map->heights[i] / (2.0f * map->colorHeightRange);
+                float grain = sinf(point.x * 1.37f + point.z * 0.83f) * cosf(point.z * 1.11f);
+                shade *= 0.93f + 0.07f * grain;
+            }
+            Color color = ColorLerp(map->lowColor, map->highColor, Clamp(elevation, 0.0f, 1.0f));
             map->mesh.colors[i * 4] = (unsigned char)(color.r * shade);
             map->mesh.colors[i * 4 + 1] = (unsigned char)(color.g * shade);
             map->mesh.colors[i * 4 + 2] = (unsigned char)(color.b * shade);
@@ -42,9 +61,8 @@ static void FillVertices(TerrainMap *map)
     }
 }
 
-bool InitTerrainMap(TerrainMap *map, float baseHeight)
+static bool InitMesh(TerrainMap *map, bool dynamic)
 {
-    *map = (TerrainMap){ .baseHeight = baseHeight };
     const int cells = TERRAIN_SIDE - 1;
     Mesh *mesh = &map->mesh;
     mesh->vertexCount = TERRAIN_SAMPLES;
@@ -73,7 +91,7 @@ bool InitTerrainMap(TerrainMap *map, float baseHeight)
             mesh->indices[next++] = (unsigned short)(b + 1);
         }
     }
-    UploadMesh(mesh, true);
+    UploadMesh(mesh, dynamic);
     map->material = LoadMaterialDefault();
     if (!mesh->vboId || !mesh->vboId[0] || !mesh->vboId[3] || !mesh->vboId[6] || !map->material.maps)
     {
@@ -81,6 +99,32 @@ bool InitTerrainMap(TerrainMap *map, float baseHeight)
         return false;
     }
     return true;
+}
+
+bool InitTerrainMap(TerrainMap *map, float baseHeight)
+{
+    *map = (TerrainMap){ .baseHeight = baseHeight, .lowColor = low, .highColor = high };
+    return InitMesh(map, true);
+}
+
+bool InitTerrainChunk(TerrainMap *map, Vector2 origin, float spacing,
+                      Color lowColor, Color highColor, float colorHeightRange,
+                      TerrainHeightSource source, const void *data)
+{
+    if (!source || !isfinite(spacing) || spacing <= 0)
+    {
+        *map = (TerrainMap){0};
+        return false;
+    }
+    *map = (TerrainMap){
+        .origin = origin, .spacing = spacing, .lowColor = lowColor, .highColor = highColor,
+        .source = source, .sourceData = data, .colorHeightRange = fmaxf(colorHeightRange, 0.001f),
+    };
+    for (int z = 0; z < TERRAIN_SIDE; ++z)
+        for (int x = 0; x < TERRAIN_SIDE; ++x)
+            map->heights[z * TERRAIN_SIDE + x] = source(data, origin.x + x * spacing, origin.y + z * spacing);
+    map->enabled = InitMesh(map, false);
+    return map->enabled;
 }
 
 void UnloadTerrainMap(TerrainMap *map)
@@ -102,16 +146,9 @@ void DrawTerrainMap(const TerrainMap *map)
     if (map->enabled) DrawMesh(map->mesh, map->material, MatrixIdentity());
 }
 
-static float SampleTerrainSurface(const TerrainMap *map, float x, float z, Vector3 *normal)
+static float TerrainTriangle(float a, float b, float c, float d, float spacing,
+                             float u, float v, Vector3 *normal)
 {
-    if (normal) *normal = (Vector3){ 0, 1, 0 };
-    if (!map->enabled || !(x >= -edge && x <= edge && z >= -edge && z <= edge))
-        return map->baseHeight;
-    float gx = (x + edge) / spacing, gz = (z + edge) / spacing;
-    int ix = (int)fminf(gx, TERRAIN_SIDE - 2), iz = (int)fminf(gz, TERRAIN_SIDE - 2);
-    float u = gx - ix, v = gz - iz;
-    float a = SamplePoint(map, ix, iz).y, b = SamplePoint(map, ix, iz + 1).y;
-    float c = SamplePoint(map, ix + 1, iz).y, d = SamplePoint(map, ix + 1, iz + 1).y;
     if (u + v <= 1)
     {
         if (normal) *normal = Vector3Normalize((Vector3){ a - c, spacing, a - b });
@@ -119,6 +156,31 @@ static float SampleTerrainSurface(const TerrainMap *map, float x, float z, Vecto
     }
     if (normal) *normal = Vector3Normalize((Vector3){ b - d, spacing, c - d });
     return d + (1 - u) * (b - d) + (1 - v) * (c - d);
+}
+
+float SampleTerrainGrid(TerrainHeightSource source, const void *data, Vector2 origin,
+                        float spacing, float x, float z, Vector3 *normal)
+{
+    float gx = (x - origin.x) / spacing, gz = (z - origin.y) / spacing;
+    float ix = floorf(gx), iz = floorf(gz);
+    float left = origin.x + ix * spacing, front = origin.y + iz * spacing;
+    return TerrainTriangle(source(data, left, front), source(data, left, front + spacing),
+                           source(data, left + spacing, front), source(data, left + spacing, front + spacing),
+                           spacing, gx - ix, gz - iz, normal);
+}
+
+static float SampleTerrainSurface(const TerrainMap *map, float x, float z, Vector3 *normal)
+{
+    if (normal) *normal = (Vector3){ 0, 1, 0 };
+    if (!map->enabled) return map->baseHeight;
+    Vector2 origin = map->source ? map->origin : editorOrigin;
+    float spacing = map->source ? map->spacing : editorSpacing;
+    float gx = (x - origin.x) / spacing, gz = (z - origin.y) / spacing;
+    if (!(gx >= 0 && gz >= 0 && gx <= TERRAIN_SIDE - 1 && gz <= TERRAIN_SIDE - 1)) return map->baseHeight;
+    int ix = (int)fminf(gx, TERRAIN_SIDE - 2), iz = (int)fminf(gz, TERRAIN_SIDE - 2);
+    return TerrainTriangle(SamplePoint(map, ix, iz).y, SamplePoint(map, ix, iz + 1).y,
+                           SamplePoint(map, ix + 1, iz).y, SamplePoint(map, ix + 1, iz + 1).y,
+                           spacing, gx - ix, gz - iz, normal);
 }
 
 float GetTerrainHeight(const TerrainMap *map, float x, float z)
