@@ -35,7 +35,7 @@ static TitleLayout LayoutTitleScreen(void)
 TitleAction ReadTitleScreen(InputPointer pointer, bool audioAvailable)
 {
     TitleLayout layout = LayoutTitleScreen();
-    const TitleAction actions[] = { TITLE_START, TITLE_DEBUG, TITLE_SANDBOX, TITLE_EDITOR, TITLE_AUDIO, TITLE_QUIT };
+    const TitleAction actions[] = { TITLE_MAZES, TITLE_DEBUG, TITLE_SANDBOX, TITLE_EDITOR, TITLE_AUDIO, TITLE_QUIT };
     for (int i = 0; i < 6; ++i)
     {
         if (ReadUiButton(layout.buttons[i], pointer, i != 4 || audioAvailable).activated) return actions[i];
@@ -58,12 +58,12 @@ void DrawTitleScreen(Vector2 pointer, bool muted, bool audioAvailable)
     int titleX = layout.narrow ? (GetScreenWidth() - MeasureText(GAME_WINDOW_TITLE, titleSize)) / 2
                                : (int)layout.x;
     DrawText(GAME_WINDOW_TITLE, titleX, (int)layout.y, titleSize, RAYWHITE);
-    DrawText("Seven stages. Nine bosses.", (int)layout.x, (int)(layout.y + 56.0f * layout.scale),
+    DrawText("Game modes", (int)layout.x, (int)(layout.y + 56.0f * layout.scale),
              (int)(19.0f * layout.scale), secondary);
 
     const char *audioLabel = !audioAvailable ? "Audio unavailable"
                                              : (muted ? "Audio off [M]" : "Audio on [M]");
-    const char *labels[] = { "Start Campaign [Enter]", "Debug Level Select", "Sandbox", "Scene Editor", audioLabel, "Quit [Esc]" };
+    const char *labels[] = { "Mazes [Enter]", "Debug Level Select", "Sandbox", "Scene Editor", audioLabel, "Quit [Esc]" };
     for (int i = 0; i < 6; ++i)
     {
         Rectangle button = layout.buttons[i];
@@ -76,5 +76,31 @@ void DrawTitleScreen(Vector2 pointer, bool muted, bool audioAvailable)
         int size = (int)(18.0f * layout.scale);
         DrawText(labels[i], (int)(button.x + 15.0f * layout.scale),
                  (int)(button.y + (button.height - size) / 2.0f), size, ink);
+    }
+}
+
+static Rectangle MazesButton(int index)
+{
+    return (Rectangle){ GetScreenWidth() * 0.5f - 135, GetScreenHeight() * 0.5f - 34 + index * 50, 270, 40 };
+}
+
+MazesAction ReadMazesMenu(InputPointer pointer)
+{
+    for (int i = 0; i < 3; ++i)
+        if (ReadUiButton(MazesButton(i), pointer, true).activated) return MAZES_CLASSIC + i;
+    return MAZES_NONE;
+}
+
+void DrawMazesMenu(Vector2 pointer)
+{
+    const char *labels[] = { "Classic (seven mazes)", "Infinite (random mazes)", "Back" };
+    int width = GetScreenWidth(), height = GetScreenHeight();
+    DrawUiPanel((Rectangle){ width * 0.5f - 155, height * 0.5f - 108, 310, 234 },
+                (Color){ 15, 24, 35, 255 });
+    DrawText("Mazes", (width - MeasureText("Mazes", 30)) / 2, height / 2 - 90, 30, RAYWHITE);
+    for (int i = 0; i < 3; ++i)
+    {
+        Rectangle button = MazesButton(i);
+        DrawUiButton(button, labels[i], ReadUiButton(button, (InputPointer){ .position = pointer }, true), true);
     }
 }

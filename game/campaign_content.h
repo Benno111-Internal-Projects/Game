@@ -5,7 +5,7 @@
 
 enum {
     CAMPAIGN_MAX_PLATFORMS = 9,
-    CAMPAIGN_MAX_COLLIDERS = CAMPAIGN_MAX_PLATFORMS + 1 + CAMPAIGN_MAZE_SIDE * ((CAMPAIGN_MAZE_SIDE + 1) / 2)
+    CAMPAIGN_MAX_COLLIDERS = CAMPAIGN_MAX_PLATFORMS + 8 + CAMPAIGN_MAZE_SIDE * ((CAMPAIGN_MAZE_SIDE + 1) / 2)
 };
 
 #define CAMPAIGN_MAZE_CELL 2.5f
@@ -37,7 +37,7 @@ typedef struct LevelSpec {
     int mazeRows, mazeCols, mazeExit;
     char maze[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
     BoundingBox colliders[CAMPAIGN_MAX_COLLIDERS];
-    int colliderCount;
+    int colliderCount, wallEnd;
 } LevelSpec;
 
 extern const BossSpec campaignBosses[CAMPAIGN_BOSS_COUNT];
@@ -45,6 +45,7 @@ extern LevelSpec campaignLevels[CAMPAIGN_LEVEL_COUNT];
 
 // Read and validate the complete numbered pack before replacing the active levels.
 bool LoadCampaignLevels(const char *directory);
+void GenerateMazeLevel(LevelSpec *level, unsigned long long stage);
 Vector2 CampaignMazeCellCenter(const LevelSpec *level, int row, int col);
 
 #endif

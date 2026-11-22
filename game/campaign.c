@@ -9,7 +9,7 @@
 
 static const LevelSpec *CurrentLevel(const Campaign *campaign)
 {
-    return &campaignLevels[campaign->level];
+    return campaign->endlessLevel ? campaign->endlessLevel : &campaignLevels[campaign->level];
 }
 
 static BoundingBox Arena(const Campaign *campaign)
@@ -124,13 +124,36 @@ static void Respawn(Campaign *campaign)
     UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
 }
 
+static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
+                       LevelSpec *endlessLevel, unsigned long long stage)
+{
+    *campaign = (Campaign){
+        .level = level, .debugRun = debugRun, .lives = lives,
+        .endlessLevel = endlessLevel, .stage = stage,
+        .camera = { .up = { 0, 1, 0 }, .fovy = 48, .projection = CAMERA_PERSPECTIVE },
+    };
+    if (endlessLevel) GenerateMazeLevel(endlessLevel, stage);
+    Respawn(campaign);
+}
+
 void StartCampaign(Campaign *campaign, int level, bool debugRun)
 {
     if (level < 0 || level >= CAMPAIGN_LEVEL_COUNT) level = 0;
-    *campaign = (Campaign){
-        .level = level, .debugRun = debugRun,
-        .camera = { .up = { 0, 1, 0 }, .fovy = 48, .projection = CAMERA_PERSPECTIVE },
-    };
+    BeginStage(campaign, level, debugRun, MAZE_RUN_LIVES, NULL, 0);
+}
+
+void StartEndlessMazes(Campaign *campaign, LevelSpec *level)
+{
+    BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1);
+}
+
+static void LoseLife(Campaign *campaign)
+{
+    if (!campaign->debugRun && --campaign->lives == 0)
+    {
+        campaign->gameOver = true;
+        return;
+    }
     Respawn(campaign);
 }
 
@@ -185,13 +208,13 @@ static void BossAttackNow(Campaign *campaign, const BossSpec *boss)
     ++campaign->attackCount;
 }
 
-static void DamagePlayer(Campaign *campaign, Vector3 origin)
+static bool DamagePlayer(Campaign *campaign, Vector3 origin)
 {
-    if (campaign->hitTimer > 0) return;
+    if (campaign->hitTimer > 0) return false;
     if (--campaign->health == 0)
     {
-        Respawn(campaign);
-        return;
+        LoseLife(campaign);
+        return true;
     }
     campaign->hitTimer = 0.95f;
     Vector3 away = Vector3Subtract(campaign->player.feet, origin);
@@ -199,12 +222,13 @@ static void DamagePlayer(Campaign *campaign, Vector3 origin)
     campaign->player.velocity = (Vector3){ push.x, 4.1f, push.y };
     campaign->player.grounded = false;
     campaign->player.groundGrace = campaign->player.jumpBuffer = 0;
+    return false;
 }
 
-static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
+static bool UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
 {
     const BossSpec *boss = CurrentBoss(campaign);
-    if (!boss || !campaign->checkpoint) return;
+    if (!boss || !campaign->checkpoint) return false;
     const BossPhase *phase = CurrentPhase(campaign, boss);
     campaign->bossMotion = fmodf(campaign->bossMotion + dt * phase->speed, 2 * PI);
     campaign->phaseNotice = fmaxf(0, campaign->phaseNotice - dt);
@@ -237,7 +261,7 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
                     ++campaign->bossIndex;
                     ResetEncounter(campaign);
                     campaign->hitTimer = 0.8f;
-                    return;
+                    return false;
                 }
                 campaign->guardTimer = 0.35f;
                 campaign->hitTimer = fmaxf(campaign->hitTimer, 0.25f);
@@ -255,18 +279,23 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
         }
         else if (feet.y < top - 0.08f && feet.y + campaign->player.height > center.y)
         {
-            int previousHealth = campaign->health;
-            DamagePlayer(campaign, center);
-            if (previousHealth == 1 && campaign->health == 3) return;
+            if (DamagePlayer(campaign, center)) return true;
         }
     }
 
+    BoundingBox arena = Arena(campaign);
     for (int i = 0; i < CAMPAIGN_MAX_ORBS; ++i)
     {
         CampaignOrb *orb = &campaign->orbs[i];
         if (orb->life <= 0) continue;
         orb->life -= dt;
         orb->position = Vector3Add(orb->position, Vector3Scale(orb->velocity, dt));
+        if (orb->position.x < arena.min.x || orb->position.x > arena.max.x ||
+            orb->position.z < arena.min.z || orb->position.z > arena.max.z)
+        {
+            orb->life = 0;
+            continue;
+        }
         float x = orb->position.x - campaign->player.feet.x;
         float z = orb->position.z - campaign->player.feet.z;
         float radiusHit = campaign->player.radius + 0.18f;
@@ -274,20 +303,19 @@ static void UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
             orb->position.y - 0.18f <= campaign->player.feet.y + campaign->player.height)
         {
             orb->life = 0;
-            int previousHealth = campaign->health;
-            DamagePlayer(campaign, orb->position);
-            if (previousHealth == 1 && campaign->health == 3) return;
+            if (DamagePlayer(campaign, orb->position)) return true;
         }
     }
+    return false;
 }
 
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt)
 {
-    if (campaign->cleared || campaign->paused) return;
+    if (campaign->cleared || campaign->gameOver || campaign->paused) return;
     if (retry)
     {
-        Respawn(campaign);
+        LoseLife(campaign);
         return;
     }
     dt = Clamp(dt, 0, 0.05f);
@@ -308,26 +336,26 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     StepPlayer(&campaign->player, &world, controls, dt);
     if (campaign->player.feet.y < -12.0f)
     {
-        Respawn(campaign);
+        LoseLife(campaign);
         return;
     }
 
     BoundingBox arena = Arena(campaign);
     TrackMazePosition(campaign);
     if (OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
-    int health = campaign->health;
-    UpdateEncounter(campaign, oldFeet, dt);
-    if (health == 1 && campaign->health == 3) return;
+    if (UpdateEncounter(campaign, oldFeet, dt)) return;
 
     if (!CurrentBoss(campaign))
     {
         Vector3 portal = GatePosition(arena);
         if (Vector3DistanceSqr(campaign->player.feet, portal) < 1.15f * 1.15f)
         {
-            if (campaign->debugRun || campaign->level == CAMPAIGN_LEVEL_COUNT - 1)
+            if (campaign->endlessLevel)
+                BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1);
+            else if (campaign->debugRun || campaign->level == CAMPAIGN_LEVEL_COUNT - 1)
                 campaign->cleared = true;
             else
-                StartCampaign(campaign, campaign->level + 1, false);
+                BeginStage(campaign, campaign->level + 1, false, campaign->lives, NULL, 0);
             return;
         }
     }
@@ -416,26 +444,25 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     for (int i = 0; i < level->platformCount; ++i) DrawStoneBox(level->platforms[i], floor);
     rlEnd();
 
+    rlSetTexture(surfaces->walls.id);
+    rlBegin(RL_QUADS);
+    Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
+    for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
     if (level->mazeRows)
     {
-        int roof = level->colliderCount - 1;
-        rlSetTexture(surfaces->walls.id);
-        rlBegin(RL_QUADS);
-        Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
-        for (int i = level->platformCount; i < roof; ++i) DrawStoneBox(level->colliders[i], wall);
-
         // Match the neighboring wall tiles without adding this tile to collision.
         Vector2 exit = CampaignMazeCellCenter(level, 0, level->mazeExit);
         float half = CAMPAIGN_MAZE_CELL * 0.5f;
         DrawStoneBox((BoundingBox){ { exit.x - half, 0, exit.y - half },
                                     { exit.x + half, CAMPAIGN_MAZE_HEIGHT, exit.y + half } }, wall);
-        rlEnd();
-
-        rlSetTexture(surfaces->ceiling.id);
-        rlBegin(RL_QUADS);
-        DrawStoneBox(level->colliders[roof], ColorBrightness(floor, -0.15f));
-        rlEnd();
     }
+    rlEnd();
+
+    rlSetTexture(surfaces->ceiling.id);
+    rlBegin(RL_QUADS);
+    for (int i = level->wallEnd; i < level->colliderCount; ++i)
+        DrawStoneBox(level->colliders[i], ColorBrightness(floor, -0.15f));
+    rlEnd();
     rlSetTexture(0);
 }
 
@@ -497,7 +524,7 @@ bool ReadCampaignMenu(InputPointer pointer)
     return ReadUiButton(MenuBounds(), pointer, true).activated;
 }
 
-static const char *const pauseLabels[] = { "Resume", "Retry checkpoint", NULL };
+
 
 static Rectangle PauseButton(int index)
 {
@@ -521,9 +548,10 @@ static void DrawCampaignPause(const Campaign *campaign, InputPointer pointer)
     for (int i = 0; i < 3; ++i)
     {
         Rectangle button = PauseButton(i);
-        const char *label = pauseLabels[i];
-        if (i == 1 && !campaign->checkpoint) label = "Retry maze";
-        if (i == 2) label = campaign->debugRun ? "Level select" : "Title screen";
+        const char *retry = campaign->checkpoint ? "Retry checkpoint" : "Retry maze";
+        if (!campaign->debugRun) retry = "Retry (costs a life)";
+        const char *labels[] = { "Resume", retry, campaign->debugRun ? "Level select" : "Mazes menu" };
+        const char *label = labels[i];
         DrawUiButton(button, label, ReadUiButton(button, pointer, true), true);
     }
 }
@@ -558,8 +586,11 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     int width = GetScreenWidth(), height = GetScreenHeight();
     const Color panel = { 15, 24, 35, 234 };
     DrawUiPanel((Rectangle){ 0, 0, (float)width, 79 }, panel);
-    DrawText(TextFormat("%d / %d   %s", campaign->level + 1, CAMPAIGN_LEVEL_COUNT, level->name),
-             16, 12, 20, RAYWHITE);
+    const char *heading = campaign->endlessLevel ? level->name :
+        TextFormat("%d / %d   %s", campaign->level + 1, CAMPAIGN_LEVEL_COUNT, level->name);
+    DrawText(heading, 16, 12, 20, RAYWHITE);
+    if (!campaign->debugRun)
+        DrawText(TextFormat("Lives %d", campaign->lives), 96, 31, 13, level->trim);
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + 23 * i, 51, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
     const BossSpec *boss = CurrentBoss(campaign);
@@ -571,16 +602,19 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     while (objectiveSize > 9 && MeasureText(objective, objectiveSize) > width - 103) --objectiveSize;
     DrawText(objective, 96, 48, objectiveSize, RAYWHITE);
     bool touch = HasPlayerTouchControls();
-    const char *back = campaign->cleared ? (campaign->debugRun ? "Levels" : "Title")
+    const char *back = (campaign->cleared || campaign->gameOver) ? (campaign->debugRun ? "Levels" : "Mazes")
                                         : (touch ? "Pause" : "Esc Pause");
     DrawUiButton(MenuBounds(), back, ReadUiButton(MenuBounds(), pointer, true), true);
 
-    if (campaign->cleared)
+    if (campaign->cleared || campaign->gameOver)
     {
         DrawRectangle(0, 79, width, height - 79, (Color){ 8, 15, 24, 225 });
-        const char *message = campaign->debugRun ? "Level clear" : "Campaign complete";
+        const char *message = campaign->gameOver ? "Game over" : (campaign->debugRun ? "Level clear" : "Mazes complete");
         DrawText(message, (width - MeasureText(message, 33)) / 2, height / 2 - 30, 33, level->trim);
         const char *prompt = campaign->debugRun ? "Return to level select" : "All nine bosses defeated";
+        if (campaign->gameOver)
+            prompt = TextFormat("Mazes cleared %llu", campaign->endlessLevel ?
+                               campaign->stage - 1 : (unsigned long long)campaign->level);
         DrawText(prompt, (width - MeasureText(prompt, 17)) / 2, height / 2 + 15, 17, RAYWHITE);
         if (!touch)
         {

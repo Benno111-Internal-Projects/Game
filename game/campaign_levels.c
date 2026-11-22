@@ -88,6 +88,79 @@ static bool MazeIsConnected(const LevelSpec *level, int start)
     return true;
 }
 
+static void AddArenaWalls(LevelSpec *level)
+{
+    BoundingBox arena = level->platforms[level->platformCount - 1];
+    float left = arena.min.x, right = arena.max.x;
+    float north = arena.min.z, south = arena.max.z;
+    float floor = arena.max.y, ceiling = floor + 6.0f;
+    BoundingBox walls[] = {
+        { { left, floor, north }, { right, ceiling, north + 0.4f } },
+        { { left, floor, north }, { left + 0.4f, ceiling, south } },
+        { { right - 0.4f, floor, north }, { right, ceiling, south } },
+    };
+    for (size_t i = 0; i < sizeof(walls) / sizeof(walls[0]); ++i)
+        level->colliders[level->colliderCount++] = walls[i];
+
+    if (level->mazeRows)
+    {
+        float center = (left + right) * 0.5f, halfDoor = CAMPAIGN_MAZE_CELL * 0.5f;
+        level->colliders[level->colliderCount++] = (BoundingBox){
+            { left, floor, south - 0.4f }, { center - halfDoor, ceiling, south }
+        };
+        level->colliders[level->colliderCount++] = (BoundingBox){
+            { center + halfDoor, floor, south - 0.4f }, { right, ceiling, south }
+        };
+        level->colliders[level->colliderCount++] = (BoundingBox){
+            { center - halfDoor, floor + CAMPAIGN_MAZE_HEIGHT, south - 0.4f },
+            { center + halfDoor, ceiling, south }
+        };
+    }
+    level->wallEnd = level->colliderCount;
+    level->colliders[level->colliderCount++] = (BoundingBox){
+        { left, ceiling, north }, { right, ceiling + 0.35f, south }
+    };
+}
+
+static void BuildMaze(LevelSpec *level, int spawn)
+{
+    float halfWidth = level->mazeCols * CAMPAIGN_MAZE_CELL * 0.5f;
+    float north = -level->mazeRows * CAMPAIGN_MAZE_CELL;
+    float exitX = CampaignMazeCellCenter(level, 0, level->mazeExit).x;
+    level->start = CampaignMazeCellCenter(level, spawn / level->mazeCols, spawn % level->mazeCols);
+    level->platformCount = level->colliderCount = 2;
+    level->platforms[0] = (BoundingBox){ { -halfWidth, -0.8f, north }, { halfWidth, 0, 0 } };
+    level->platforms[1] = (BoundingBox){ { exitX - 7, -0.8f, north - 15 }, { exitX + 7, 0, north } };
+    memcpy(level->colliders, level->platforms, 2 * sizeof(level->platforms[0]));
+
+    BoundingBox roof = { { -halfWidth, CAMPAIGN_MAZE_HEIGHT, north },
+                         { halfWidth, CAMPAIGN_MAZE_HEIGHT + 0.35f, 0 } };
+
+    // Merge horizontal wall tiles into strips for rendering and player collision.
+    for (int row = 0; row < level->mazeRows; ++row)
+    {
+        int col = 0;
+        while (col < level->mazeCols)
+        {
+            if (level->maze[row * level->mazeCols + col] != '#')
+            {
+                ++col;
+                continue;
+            }
+            int first = col;
+            do { ++col; }
+            while (col < level->mazeCols && level->maze[row * level->mazeCols + col] == '#');
+            float z = north + row * CAMPAIGN_MAZE_CELL;
+            level->colliders[level->colliderCount++] = (BoundingBox){
+                { first * CAMPAIGN_MAZE_CELL - halfWidth, 0, z },
+                { col * CAMPAIGN_MAZE_CELL - halfWidth, CAMPAIGN_MAZE_HEIGHT, z + CAMPAIGN_MAZE_CELL },
+            };
+        }
+    }
+    AddArenaWalls(level);
+    level->colliders[level->colliderCount++] = roof;
+}
+
 static bool ReadMaze(char *cursor, LevelSpec *level)
 {
     float size[2];
@@ -116,42 +189,54 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
     }
     if (*cursor || spawn < 0 || level->mazeExit < 0 || !MazeIsConnected(level, spawn)) return false;
 
-    float halfWidth = level->mazeCols * CAMPAIGN_MAZE_CELL * 0.5f;
-    float north = -level->mazeRows * CAMPAIGN_MAZE_CELL;
-    float exitX = CampaignMazeCellCenter(level, 0, level->mazeExit).x;
-    level->start = CampaignMazeCellCenter(level, spawn / level->mazeCols, spawn % level->mazeCols);
-    level->platformCount = level->colliderCount = 2;
-    level->platforms[0] = (BoundingBox){ { -halfWidth, -0.8f, north }, { halfWidth, 0, 0 } };
-    level->platforms[1] = (BoundingBox){ { exitX - 7, -0.8f, north - 15 }, { exitX + 7, 0, north } };
-    memcpy(level->colliders, level->platforms, 2 * sizeof(level->platforms[0]));
+    BuildMaze(level, spawn);
+    return true;
+}
 
-    // Keep the solid roof last so it can use a different surface when drawn.
-    BoundingBox roof = { { -halfWidth, CAMPAIGN_MAZE_HEIGHT, north },
-                         { halfWidth, CAMPAIGN_MAZE_HEIGHT + 0.35f, 0 } };
-
-    // Merge horizontal wall tiles into strips for rendering and player collision.
-    for (int row = 0; row < level->mazeRows; ++row)
+void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
+{
+    int layout = (int)((stage - 1) % CAMPAIGN_LEVEL_COUNT);
+    int side = 17 + 2 * (int)(stage < 7 ? stage - 1 : 6);
+    const LevelSpec *palette = &campaignLevels[layout];
+    *level = (LevelSpec){
+        .stone = palette->stone, .trim = palette->trim,
+        .mazeRows = side, .mazeCols = side,
+        .firstBoss = (int)((stage - 1) % CAMPAIGN_BOSS_COUNT), .bossCount = 1,
+    };
+    snprintf(level->name, sizeof(level->name), "Infinite maze %llu", stage);
+    memset(level->maze, '#', sizeof(level->maze));
+    int exit = 1 + 2 * GetRandomValue(0, (side - 3) / 2);
+    level->mazeExit = exit;
+    level->maze[exit] = 'E';
+    int path[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { side + exit };
+    int depth = 1, deepest = 0, spawn = path[0];
+    level->maze[spawn] = '.';
+    const int dx[] = { 2, -2, 0, 0 }, dz[] = { 0, 0, 2, -2 };
+    while (depth > 0)
     {
-        int col = 0;
-        while (col < level->mazeCols)
+        int cell = path[depth - 1], candidates[4], count = 0;
+        for (int i = 0; i < 4; ++i)
         {
-            if (level->maze[row * level->mazeCols + col] != '#')
-            {
-                ++col;
-                continue;
-            }
-            int first = col;
-            do { ++col; }
-            while (col < level->mazeCols && level->maze[row * level->mazeCols + col] == '#');
-            float z = north + row * CAMPAIGN_MAZE_CELL;
-            level->colliders[level->colliderCount++] = (BoundingBox){
-                { first * CAMPAIGN_MAZE_CELL - halfWidth, 0, z },
-                { col * CAMPAIGN_MAZE_CELL - halfWidth, CAMPAIGN_MAZE_HEIGHT, z + CAMPAIGN_MAZE_CELL },
-            };
+            int x = cell % side + dx[i], z = cell / side + dz[i];
+            if (x > 0 && x < side - 1 && z > 0 && z < side - 1 &&
+                level->maze[z * side + x] == '#') candidates[count++] = z * side + x;
+        }
+        if (count == 0)
+        {
+            --depth;
+            continue;
+        }
+        int next = candidates[GetRandomValue(0, count - 1)];
+        level->maze[(cell + next) / 2] = level->maze[next] = '.';
+        path[depth++] = next;
+        if (depth > deepest)
+        {
+            deepest = depth;
+            spawn = next;
         }
     }
-    level->colliders[level->colliderCount++] = roof;
-    return true;
+    level->maze[spawn] = 'S';
+    BuildMaze(level, spawn);
 }
 
 static bool ReadLevel(char *cursor, LevelSpec *level)
@@ -196,9 +281,11 @@ static bool ReadLevel(char *cursor, LevelSpec *level)
     memcpy(level->colliders, level->platforms, (size_t)level->platformCount * sizeof(level->platforms[0]));
     BoundingBox first = level->platforms[0];
     BoundingBox arena = level->platforms[level->platformCount - 1];
-    return start[0] >= first.min.x + 0.3f && start[0] <= first.max.x - 0.3f &&
+    bool valid = start[0] >= first.min.x + 0.3f && start[0] <= first.max.x - 0.3f &&
            start[1] >= first.min.z + 0.3f && start[1] <= first.max.z - 0.3f &&
            arena.max.x - arena.min.x >= 8 && arena.max.z - arena.min.z >= 8;
+    if (valid) AddArenaWalls(level);
+    return valid;
 }
 
 bool LoadCampaignLevels(const char *directory)

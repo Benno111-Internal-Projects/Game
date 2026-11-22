@@ -128,8 +128,9 @@ typedef struct StarterGame {
     BallDrawData ballDraw;
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
     PrefabInstance ballInstance, titleModel;
-    bool titleOpen, editorOpen, campaignOpen, debugOpen;
+    bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen;
     Campaign campaign;
+    LevelSpec endlessLevel;
     CampaignSurfaces campaignSurfaces;
     SceneEditor editor;
     float titleTime;
@@ -325,11 +326,12 @@ static void DrawPlayerAvatar(const PlayerController *player)
     DrawCapsule(bottom, top, player->radius, 10, 5, (Color){ 187, 224, 153, 255 });
 }
 
-static void OpenCampaign(StarterGame *game, int level, bool debug)
+static void OpenCampaign(StarterGame *game, int level, bool debug, bool infinite)
 {
-    StartCampaign(&game->campaign, level, debug);
+    if (infinite) StartEndlessMazes(&game->campaign, &game->endlessLevel);
+    else StartCampaign(&game->campaign, level, debug);
     game->campaignOpen = true;
-    game->titleOpen = game->debugOpen = false;
+    game->titleOpen = game->debugOpen = game->mazesOpen = false;
     if (!HasPlayerTouchControls()) DisableCursor();
 }
 
@@ -342,14 +344,15 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     bool menu = touch && ReadCampaignMenu(pointer);
     CampaignPauseAction pauseAction = campaign->paused ? ReadCampaignPause(pointer) : CAMPAIGN_PAUSE_NONE;
     if (pauseAction == CAMPAIGN_PAUSE_LEAVE ||
-        (campaign->cleared && (escape || menu || actions[ACTION_START].pressed)))
+        ((campaign->cleared || campaign->gameOver) && (escape || menu || actions[ACTION_START].pressed)))
     {
         game->campaignOpen = false;
         game->debugOpen = campaign->debugRun;
-        game->titleOpen = !game->debugOpen;
+        game->mazesOpen = !game->debugOpen;
         if (!touch) EnableCursor();
         return;
     }
+    if (campaign->cleared || campaign->gameOver) return;
     if (campaign->paused)
     {
         if (escape || actions[ACTION_START].pressed || pauseAction == CAMPAIGN_PAUSE_RESUME ||
@@ -394,6 +397,20 @@ static bool UpdateStarter(void *state, float deltaTime)
         UpdateStarterAudio(game);
         return true;
     }
+    if (game->mazesOpen)
+    {
+        game->titlePointer = pointer.position;
+        MazesAction choice = ReadMazesMenu(pointer);
+        if (choice == MAZES_BACK || actions[ACTION_EXIT].pressed)
+        {
+            game->mazesOpen = false;
+            game->titleOpen = true;
+        }
+        else if (choice == MAZES_CLASSIC || choice == MAZES_INFINITE || actions[ACTION_START].pressed)
+            OpenCampaign(game, 0, false, choice == MAZES_INFINITE);
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->debugOpen)
     {
         game->titlePointer = pointer.position;
@@ -403,7 +420,7 @@ static bool UpdateStarter(void *state, float deltaTime)
             game->debugOpen = false;
             game->titleOpen = true;
         }
-        else if (level >= 0) OpenCampaign(game, level, true);
+        else if (level >= 0) OpenCampaign(game, level, true, false);
         UpdateStarterAudio(game);
         return true;
     }
@@ -443,9 +460,10 @@ static bool UpdateStarter(void *state, float deltaTime)
             UpdateStarterAudio(game);
             return true;
         }
-        if (action == TITLE_START || actions[ACTION_START].pressed)
+        if (action == TITLE_MAZES || actions[ACTION_START].pressed)
         {
-            OpenCampaign(game, 0, false);
+            game->titleOpen = false;
+            game->mazesOpen = true;
             UpdateStarterAudio(game);
             return true;
         }
@@ -629,6 +647,11 @@ static void DrawStarter(const void *state)
         DrawCampaignWorld(&game->campaign, &game->campaignSurfaces);
         EndMode3D();
         DrawCampaignHud(&game->campaign, (InputPointer){ .position = game->titlePointer });
+        return;
+    }
+    if (game->mazesOpen)
+    {
+        DrawMazesMenu(game->titlePointer);
         return;
     }
     if (game->debugOpen)

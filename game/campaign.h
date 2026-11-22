@@ -21,7 +21,15 @@ typedef struct CampaignOrb {
     float life;
 } CampaignOrb;
 
+struct LevelSpec;
+
+enum { MAZE_RUN_LIVES = 3 };
+
 typedef struct Campaign {
+    struct LevelSpec *endlessLevel;
+    unsigned long long stage;
+    int lives;
+    bool gameOver;
     PlayerController player;
     WalkCamera view;
     Camera3D camera;
@@ -36,6 +44,7 @@ typedef struct Campaign {
 } Campaign;
 
 void StartCampaign(Campaign *campaign, int level, bool debugRun);
+void StartEndlessMazes(Campaign *campaign, struct LevelSpec *level);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);
 bool LoadCampaignSurfaces(CampaignSurfaces *surfaces);

@@ -22,16 +22,21 @@ With a multi-config generator, look for the executable and its asset folders in 
 On desktop, **F11** switches between borderless fullscreen and the previous window
 size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
-## Campaign
+## Mazes bonus mode
 
-Choose **Start Campaign** to play through seven levels and nine bosses. Explore a
-roofed maze before each arena. The minimap records explored passages. Land on a
-boss from above to damage it, jump over its attacks, and enter the gate after
-defeating the arena's bosses.
-Reaching an arena sets a checkpoint. Falling or losing all three health
-points restarts from the latest checkpoint. Campaign progress resets when
-starting a new run. Eight bosses change their movement and attacks as they take
-damage. The Hollow Crown has three phases.
+Choose **Mazes** on the title screen. **Classic** has seven authored mazes and
+nine bosses. **Infinite** generates a new maze after every boss and cycles
+through the nine bosses. Generated mazes grow from 17 × 17 to 29 × 29 cells.
+
+Find the hidden passage to the enclosed boss room. Land on a boss from above
+to damage it, jump over its attacks, and use the gate once the room is clear.
+Eight bosses change movement and attacks as they take damage. The Hollow Crown
+has three phases.
+
+Each run starts with three lives and three health points per life. Dying or
+retrying spends one life. Reaching a boss room sets a checkpoint for that
+maze. Lives carry forward between mazes, and the run ends when they run out.
+Debug level select gives unlimited retries.
 
 | Level | Bosses |
 | --- | --- |
@@ -44,9 +49,9 @@ damage. The Hollow Crown has three phases.
 | Crown Keep | Cinder Regent, The Hollow Crown |
 
 On desktop, use **WASD**, mouse look, **Space** to jump, **Left Shift** to
-sprint, **R** to retry, and **Esc** to pause. On mobile, use the on-screen
+sprint, **R** to spend a life and retry, and **Esc** to pause. On mobile, use the on-screen
 stick, swipe-to-look, Jump, and the **Pause** button. The pause menu can resume
-play, retry from the latest checkpoint, or return to the title screen or debug
+play, retry from the latest checkpoint, or return to the Mazes menu or debug
 level picker.
 
 **Debug Level Select** opens any stage directly. Click or tap its name, or
