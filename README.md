@@ -30,14 +30,17 @@ through the nine bosses. Each generated maze has an independently random
 width and height from 17 to 200 cells. The minimap follows the player in
 large mazes.
 
-Find the hidden passage to the enclosed boss room. Land on a boss from above
+Wall torches light the dark corridors and burn on contact. Find the hidden
+passage to the enclosed boss room. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
 Eight bosses change movement and attacks as they take damage. The Hollow Crown
 has three phases.
 
 Each run starts with three lives and three health points per life. Dying or
 retrying spends one life. Reaching a boss room sets a checkpoint for that
-maze. Lives carry forward between mazes, and the run ends when they run out.
+maze. The death screen shows what killed you and how many lives remain.
+Press **Enter** or select the respawn button to continue. Lives carry forward
+between mazes, and the run ends when they run out.
 Debug level select gives unlimited retries.
 
 | Level | Bosses |

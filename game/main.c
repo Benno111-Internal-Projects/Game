@@ -161,7 +161,7 @@ static bool InitStarter(void *state)
         return false;
 #endif
     if (!LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
-        !LoadCampaignSurfaces(&game->campaignSurfaces)) return false;
+        !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir)) return false;
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
     if (!IsModelValid(game->model) || game->model.meshes[0].vertexCount == 0) return false;
@@ -342,9 +342,11 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     bool touch = HasPlayerTouchControls();
     bool escape = actions[ACTION_EXIT].pressed;
     bool menu = touch && ReadCampaignMenu(pointer);
+    bool deathScreen = campaign->death != CAMPAIGN_DEATH_NONE;
+    bool advance = actions[ACTION_START].pressed || (deathScreen && ReadCampaignContinue(pointer));
     CampaignPauseAction pauseAction = campaign->paused ? ReadCampaignPause(pointer) : CAMPAIGN_PAUSE_NONE;
     if (pauseAction == CAMPAIGN_PAUSE_LEAVE ||
-        ((campaign->cleared || campaign->gameOver) && (escape || menu || actions[ACTION_START].pressed)))
+        ((campaign->cleared || campaign->gameOver) && (escape || (!deathScreen && menu) || advance)))
     {
         game->campaignOpen = false;
         game->debugOpen = campaign->debugRun;
@@ -353,6 +355,15 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
         return;
     }
     if (campaign->cleared || campaign->gameOver) return;
+    if (deathScreen)
+    {
+        if (advance)
+        {
+            ContinueCampaign(campaign);
+            if (!touch) DisableCursor();
+        }
+        return;
+    }
     if (campaign->paused)
     {
         if (escape || actions[ACTION_START].pressed || pauseAction == CAMPAIGN_PAUSE_RESUME ||
@@ -381,6 +392,7 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
                  touch ? touchInput.look : pointer.delta,
                  actions[ACTION_SPACE].pressed || touchInput.jumpPressed,
                  actions[ACTION_SPRINT].down, actions[ACTION_RESET].pressed, deltaTime);
+    if (!touch && campaign->death != CAMPAIGN_DEATH_NONE) EnableCursor();
 }
 
 static bool UpdateStarter(void *state, float deltaTime)

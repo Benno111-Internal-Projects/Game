@@ -62,6 +62,32 @@ static BoundingBox MazeWall(const LevelSpec *level, int row, int firstCol, int l
     };
 }
 
+static bool WallTorch(const LevelSpec *level, int row, int col, Vector3 *flame, Vector3 *mount)
+{
+    if (row <= 1 || col <= 0 || row >= level->mazeRows - 1 || col >= level->mazeCols - 1)
+        return false;
+    char tile = level->maze[row * level->mazeCols + col];
+    unsigned int pattern = (unsigned int)row * 73856093u ^ (unsigned int)col * 19349663u;
+    if (tile != 'S' && (tile != '.' || pattern % 5 != 0)) return false;
+
+    const int dx[] = { 1, 0, -1, 0 }, dz[] = { 0, 1, 0, -1 };
+    Vector2 center = CampaignMazeCellCenter(level, row, col);
+    for (unsigned int offset = 0; offset < 4; ++offset)
+    {
+        unsigned int side = (pattern / 5 + offset) % 4;
+        int neighbor = (row + dz[side]) * level->mazeCols + col + dx[side];
+        if (level->maze[neighbor] != '#') continue;
+        const float half = CAMPAIGN_MAZE_CELL * 0.5f;
+        *flame = (Vector3){ center.x + dx[side] * (half - 0.23f), 1.38f,
+                           center.y + dz[side] * (half - 0.23f) };
+        if (mount)
+            *mount = (Vector3){ center.x + dx[side] * (half - 0.02f), 0.97f,
+                               center.y + dz[side] * (half - 0.02f) };
+        return true;
+    }
+    return false;
+}
+
 static int MazeCellAt(const LevelSpec *level, Vector3 position)
 {
     Vector2 grid = MazeGridPosition(level, position);
@@ -187,14 +213,25 @@ void StartEndlessMazes(Campaign *campaign, LevelSpec *level)
     BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1);
 }
 
-static void LoseLife(Campaign *campaign)
+static void LoseLife(Campaign *campaign, CampaignDeath cause)
 {
+    campaign->death = cause;
+    if (cause != CAMPAIGN_DEATH_NONE) campaign->health = 0;
     if (!campaign->debugRun && --campaign->lives == 0)
     {
         campaign->gameOver = true;
         return;
     }
-    Respawn(campaign);
+    if (cause == CAMPAIGN_DEATH_NONE) Respawn(campaign);
+}
+
+void ContinueCampaign(Campaign *campaign)
+{
+    if (!campaign->gameOver && campaign->death != CAMPAIGN_DEATH_NONE)
+    {
+        campaign->death = CAMPAIGN_DEATH_NONE;
+        Respawn(campaign);
+    }
 }
 
 static void SpawnOrb(Campaign *campaign, Vector3 start, float angle, float speed)
@@ -248,12 +285,12 @@ static void BossAttackNow(Campaign *campaign, const BossSpec *boss)
     ++campaign->attackCount;
 }
 
-static bool DamagePlayer(Campaign *campaign, Vector3 origin)
+static bool DamagePlayer(Campaign *campaign, Vector3 origin, CampaignDeath cause)
 {
     if (campaign->hitTimer > 0) return false;
     if (--campaign->health == 0)
     {
-        LoseLife(campaign);
+        LoseLife(campaign, cause);
         return true;
     }
     campaign->hitTimer = 0.95f;
@@ -319,7 +356,7 @@ static bool UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
         }
         else if (feet.y < top - 0.08f && feet.y + campaign->player.height > center.y)
         {
-            if (DamagePlayer(campaign, center)) return true;
+            if (DamagePlayer(campaign, center, CAMPAIGN_DEATH_BOSS)) return true;
         }
     }
 
@@ -343,19 +380,40 @@ static bool UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
             orb->position.y - 0.18f <= campaign->player.feet.y + campaign->player.height)
         {
             orb->life = 0;
-            if (DamagePlayer(campaign, orb->position)) return true;
+            if (DamagePlayer(campaign, orb->position, CAMPAIGN_DEATH_BOSS)) return true;
         }
     }
+    return false;
+}
+
+static bool TouchTorches(Campaign *campaign, const LevelSpec *level)
+{
+    if (campaign->hitTimer > 0) return false;
+    const PlayerController *player = &campaign->player;
+    const Vector3 feet = player->feet;
+    const float fireRadius = 0.26f;
+    MazeRegion region = NearbyMaze(level, feet, 1);
+    for (int row = region.firstRow; row < region.lastRow; ++row)
+        for (int col = region.firstCol; col < region.lastCol; ++col)
+        {
+            Vector3 flame;
+            if (!WallTorch(level, row, col, &flame, NULL)) continue;
+            float dx = feet.x - flame.x, dz = feet.z - flame.z;
+            float reach = player->radius + fireRadius;
+            if (dx * dx + dz * dz <= reach * reach && feet.y <= flame.y + fireRadius &&
+                feet.y + player->height >= flame.y - fireRadius)
+                return DamagePlayer(campaign, flame, CAMPAIGN_DEATH_TORCH);
+        }
     return false;
 }
 
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt)
 {
-    if (campaign->cleared || campaign->gameOver || campaign->paused) return;
+    if (campaign->cleared || campaign->gameOver || campaign->paused || campaign->death != CAMPAIGN_DEATH_NONE) return;
     if (retry)
     {
-        LoseLife(campaign);
+        LoseLife(campaign, CAMPAIGN_DEATH_NONE);
         return;
     }
     dt = Clamp(dt, 0, 0.05f);
@@ -377,14 +435,14 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     StepPlayer(&campaign->player, &world, controls, dt);
     if (campaign->player.feet.y < -12.0f)
     {
-        LoseLife(campaign);
+        LoseLife(campaign, CAMPAIGN_DEATH_FALL);
         return;
     }
 
     BoundingBox arena = Arena(campaign);
     TrackMazePosition(campaign);
     if (OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
-    if (UpdateEncounter(campaign, oldFeet, dt)) return;
+    if (TouchTorches(campaign, CurrentLevel(campaign)) || UpdateEncounter(campaign, oldFeet, dt)) return;
 
     if (!CurrentBoss(campaign))
     {
@@ -433,13 +491,18 @@ static Texture2D LoadStoneTexture(int tileWidth, int tileHeight, bool stagger)
     return texture;
 }
 
-bool LoadCampaignSurfaces(CampaignSurfaces *surfaces)
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir)
 {
     surfaces->walls = LoadStoneTexture(32, 16, true);
     surfaces->platforms = LoadStoneTexture(32, 32, false);
     surfaces->ceiling = LoadStoneTexture(16, 32, true);
-    return IsTextureValid(surfaces->walls) && IsTextureValid(surfaces->platforms) &&
-           IsTextureValid(surfaces->ceiling);
+    surfaces->mazeLighting = LoadShader(TextFormat("%smaze.vert", shaderDir),
+                                        TextFormat("%smaze.frag", shaderDir));
+    if (!IsShaderValid(surfaces->mazeLighting) || surfaces->mazeLighting.id == rlGetShaderIdDefault())
+        return false;
+    surfaces->torchLightsLocation = GetShaderLocation(surfaces->mazeLighting, "torchLights[0]");
+    return surfaces->torchLightsLocation >= 0 && IsTextureValid(surfaces->walls) &&
+           IsTextureValid(surfaces->platforms) && IsTextureValid(surfaces->ceiling);
 }
 
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
@@ -447,6 +510,8 @@ void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
     if (surfaces.walls.id) UnloadTexture(surfaces.walls);
     if (surfaces.platforms.id) UnloadTexture(surfaces.platforms);
     if (surfaces.ceiling.id) UnloadTexture(surfaces.ceiling);
+    if (surfaces.mazeLighting.id && surfaces.mazeLighting.id != rlGetShaderIdDefault())
+        UnloadShader(surfaces.mazeLighting);
 }
 
 static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, Color tint)
@@ -477,18 +542,86 @@ static void DrawStoneBox(BoundingBox box, Color tint)
     StoneFace(a, b, f, e, 1, side);
 }
 
-static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye)
+static void DrawTexturedStone(Texture2D texture, BoundingBox box, Color color)
 {
-    rlSetTexture(surfaces->platforms.id);
+    rlSetTexture(texture.id);
     rlBegin(RL_QUADS);
-    Color floor = ColorLerp(level->stone, level->trim, 0.19f);
-    for (int i = 0; i < level->platformCount; ++i) DrawStoneBox(level->platforms[i], floor);
+    DrawStoneBox(box, color);
     rlEnd();
+    rlSetTexture(0);
+}
+
+static float TorchFlicker(Vector3 flame, float time)
+{
+    return 0.89f + 0.08f * sinf(time * 12.0f + flame.x) + 0.07f * sinf(time * 19.0f + flame.z);
+}
+
+static void SetMazeLights(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye, float time)
+{
+    enum { LIGHT_COUNT = 8 };
+    Vector4 lights[LIGHT_COUNT] = { 0 };
+    float distances[LIGHT_COUNT];
+    for (int i = 0; i < LIGHT_COUNT; ++i) distances[i] = 24.0f * 24.0f;
+    MazeRegion region = NearbyMaze(level, eye, 10);
+    for (int row = region.firstRow; row < region.lastRow; ++row)
+        for (int col = region.firstCol; col < region.lastCol; ++col)
+        {
+            Vector3 flame;
+            if (!WallTorch(level, row, col, &flame, NULL)) continue;
+            float distance = Vector3DistanceSqr(eye, flame);
+            int farthest = 0;
+            for (int i = 1; i < LIGHT_COUNT; ++i)
+                if (distances[i] > distances[farthest]) farthest = i;
+            if (distance >= distances[farthest]) continue;
+            distances[farthest] = distance;
+            lights[farthest] = (Vector4){ flame.x, flame.y, flame.z, TorchFlicker(flame, time) };
+        }
+    SetShaderValueV(surfaces->mazeLighting, surfaces->torchLightsLocation,
+                    lights, SHADER_UNIFORM_VEC4, LIGHT_COUNT);
+}
+
+static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
+{
+    MazeRegion region = NearbyMaze(level, eye, 10);
+    for (int row = region.firstRow; row < region.lastRow; ++row)
+        for (int col = region.firstCol; col < region.lastCol; ++col)
+        {
+            Vector3 flame, mount;
+            if (!WallTorch(level, row, col, &flame, &mount)) continue;
+            Vector3 base = { flame.x, flame.y - 0.13f, flame.z };
+            DrawCylinderEx(mount, base, 0.065f, 0.095f, 6, (Color){ 88, 54, 31, 255 });
+            DrawCylinder(base, 0.13f, 0.09f, 0.10f, 7, (Color){ 65, 55, 51, 255 });
+            float flicker = TorchFlicker(flame, time);
+            Vector3 tip = { flame.x + 0.05f * sinf(time * 15.0f + flame.z),
+                            flame.y + 0.36f * flicker, flame.z };
+            DrawCylinderEx(base, tip, 0.14f, 0.015f, 7, ORANGE);
+            DrawSphereEx(flame, 0.09f * flicker, 5, 7, YELLOW);
+        }
+}
+
+static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye, float time)
+{
+    Color floor = ColorLerp(level->stone, level->trim, 0.19f);
+    Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
+    Color ceiling = ColorBrightness(floor, -0.15f);
+    int firstPlatform = level->mazeRows ? 1 : 0;
+    for (int i = firstPlatform; i < level->platformCount; ++i)
+        DrawTexturedStone(surfaces->platforms, level->platforms[i], floor);
 
     rlSetTexture(surfaces->walls.id);
     rlBegin(RL_QUADS);
-    Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
     for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
+    rlEnd();
+    rlSetTexture(0);
+    DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+    if (!level->mazeRows) return;
+
+    SetMazeLights(level, surfaces, eye, time);
+    BeginShaderMode(surfaces->mazeLighting);
+    DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
+    DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
+    rlSetTexture(surfaces->walls.id);
+    rlBegin(RL_QUADS);
     MazeRegion region = NearbyMaze(level, eye, 32);
     for (int row = region.firstRow; row < region.lastRow; ++row)
     {
@@ -508,13 +641,9 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
         }
     }
     rlEnd();
-
-    rlSetTexture(surfaces->ceiling.id);
-    rlBegin(RL_QUADS);
-    for (int i = level->wallEnd; i < level->colliderCount; ++i)
-        DrawStoneBox(level->colliders[i], ColorBrightness(floor, -0.15f));
-    rlEnd();
     rlSetTexture(0);
+    EndShaderMode();
+    DrawWallTorches(level, eye, time);
 }
 
 static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
@@ -539,7 +668,7 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
 {
     const LevelSpec *level = CurrentLevel(campaign);
     DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
-    DrawCampaignSurfaces(level, surfaces, campaign->camera.position);
+    DrawCampaignSurfaces(level, surfaces, campaign->camera.position, campaign->time);
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
@@ -607,6 +736,36 @@ static void DrawCampaignPause(const Campaign *campaign, InputPointer pointer)
     }
 }
 
+static Rectangle ContinueBounds(void)
+{
+    return (Rectangle){ GetScreenWidth() * 0.5f - 116, GetScreenHeight() * 0.5f + 42, 232, 38 };
+}
+
+bool ReadCampaignContinue(InputPointer pointer)
+{
+    return ReadUiButton(ContinueBounds(), pointer, true).activated;
+}
+
+static void DrawCampaignDeath(const Campaign *campaign, InputPointer pointer)
+{
+    int width = GetScreenWidth(), height = GetScreenHeight();
+    const char *title = "You died";
+    const char *cause = campaign->death == CAMPAIGN_DEATH_TORCH ? "Burned by a wall torch" :
+                        campaign->death == CAMPAIGN_DEATH_FALL ? "Fell into the void" : "Defeated by the boss";
+    const char *status = campaign->debugRun ? "Debug run" : TextFormat("Lives remaining %d", campaign->lives);
+    if (campaign->gameOver)
+        status = TextFormat("No lives left   /   Mazes cleared %llu", campaign->endlessLevel ?
+                            campaign->stage - 1 : (unsigned long long)campaign->level);
+    const char *button = campaign->gameOver ? "Return to Mazes" :
+                         campaign->checkpoint ? "Respawn at checkpoint" : "Respawn at maze start";
+    DrawRectangle(0, 0, width, height, (Color){ 25, 9, 16, 229 });
+    DrawText(title, (width - MeasureText(title, 32)) / 2, height / 2 - 83, 32, (Color){ 250, 134, 111, 255 });
+    DrawText(cause, (width - MeasureText(cause, 17)) / 2, height / 2 - 31, 17, RAYWHITE);
+    DrawText(status, (width - MeasureText(status, 15)) / 2, height / 2, 15, LIGHTGRAY);
+    Rectangle bounds = ContinueBounds();
+    DrawUiButton(bounds, button, ReadUiButton(bounds, pointer, true), true);
+}
+
 static void DrawMazeMap(const Campaign *campaign)
 {
     const LevelSpec *level = CurrentLevel(campaign);
@@ -649,6 +808,11 @@ static void DrawMazeMap(const Campaign *campaign)
 
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
 {
+    if (campaign->death != CAMPAIGN_DEATH_NONE)
+    {
+        DrawCampaignDeath(campaign, pointer);
+        return;
+    }
     const LevelSpec *level = CurrentLevel(campaign);
     int width = GetScreenWidth(), height = GetScreenHeight();
     const Color panel = { 15, 24, 35, 234 };

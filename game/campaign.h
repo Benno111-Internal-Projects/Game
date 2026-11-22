@@ -10,11 +10,17 @@ enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48
 
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;
+    Shader mazeLighting;
+    int torchLightsLocation;
 } CampaignSurfaces;
 
 typedef enum CampaignPauseAction {
     CAMPAIGN_PAUSE_NONE, CAMPAIGN_PAUSE_RESUME, CAMPAIGN_PAUSE_RETRY, CAMPAIGN_PAUSE_LEAVE
 } CampaignPauseAction;
+
+typedef enum CampaignDeath {
+    CAMPAIGN_DEATH_NONE, CAMPAIGN_DEATH_TORCH, CAMPAIGN_DEATH_BOSS, CAMPAIGN_DEATH_FALL
+} CampaignDeath;
 
 typedef struct CampaignOrb {
     Vector3 position, velocity;
@@ -30,6 +36,7 @@ typedef struct Campaign {
     unsigned long long stage;
     int lives;
     bool gameOver;
+    CampaignDeath death;
     PlayerController player;
     WalkCamera view;
     Camera3D camera;
@@ -47,7 +54,9 @@ void StartCampaign(Campaign *campaign, int level, bool debugRun);
 void StartEndlessMazes(Campaign *campaign, struct LevelSpec *level);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);
-bool LoadCampaignSurfaces(CampaignSurfaces *surfaces);
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir);
+void ContinueCampaign(Campaign *campaign);
+bool ReadCampaignContinue(InputPointer pointer);
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces);
 void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surfaces);
 CampaignPauseAction ReadCampaignPause(InputPointer pointer);
