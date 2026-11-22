@@ -30,13 +30,43 @@ static const BossPhase *CurrentPhase(const Campaign *campaign, const BossSpec *b
     return &boss->phases[campaign->bossPhase];
 }
 
+typedef struct MazeRegion {
+    int firstRow, lastRow, firstCol, lastCol;
+} MazeRegion;
+
+static Vector2 MazeGridPosition(const LevelSpec *level, Vector3 position)
+{
+    return (Vector2){ position.x / CAMPAIGN_MAZE_CELL + level->mazeCols * 0.5f,
+                      position.z / CAMPAIGN_MAZE_CELL + level->mazeRows };
+}
+
+static MazeRegion NearbyMaze(const LevelSpec *level, Vector3 position, int radius)
+{
+    Vector2 grid = MazeGridPosition(level, position);
+    float col = floorf(grid.x), row = floorf(grid.y);
+    return (MazeRegion){
+        (int)Clamp(row - radius, 0, (float)level->mazeRows),
+        (int)Clamp(row + radius + 1, 0, (float)level->mazeRows),
+        (int)Clamp(col - radius, 0, (float)level->mazeCols),
+        (int)Clamp(col + radius + 1, 0, (float)level->mazeCols),
+    };
+}
+
+static BoundingBox MazeWall(const LevelSpec *level, int row, int firstCol, int lastCol)
+{
+    const BoundingBox floor = level->platforms[0];
+    float z = floor.min.z + row * CAMPAIGN_MAZE_CELL;
+    return (BoundingBox){
+        { floor.min.x + firstCol * CAMPAIGN_MAZE_CELL, 0, z },
+        { floor.min.x + lastCol * CAMPAIGN_MAZE_CELL, CAMPAIGN_MAZE_HEIGHT, z + CAMPAIGN_MAZE_CELL },
+    };
+}
+
 static int MazeCellAt(const LevelSpec *level, Vector3 position)
 {
-    if (level->mazeRows == 0) return -1;
-    int row = (int)floorf(position.z / CAMPAIGN_MAZE_CELL + level->mazeRows);
-    int col = (int)floorf(position.x / CAMPAIGN_MAZE_CELL + level->mazeCols * 0.5f);
-    if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return -1;
-    return row * level->mazeCols + col;
+    Vector2 grid = MazeGridPosition(level, position);
+    if (grid.y < 0 || grid.y >= level->mazeRows || grid.x < 0 || grid.x >= level->mazeCols) return -1;
+    return (int)grid.y * level->mazeCols + (int)grid.x;
 }
 
 static void TrackMazePosition(Campaign *campaign)
@@ -96,12 +126,21 @@ static void ResetEncounter(Campaign *campaign)
     UpdateBossPosition(campaign);
 }
 
-static PlayerWorld CampaignWorld(const Campaign *campaign)
+enum { COLLISION_RADIUS = 2, COLLISION_WIDTH = 2 * COLLISION_RADIUS + 1 };
+
+static PlayerWorld CampaignWorld(const LevelSpec *level, Vector3 position, BoundingBox *boxes)
 {
-    const LevelSpec *level = CurrentLevel(campaign);
-    return (PlayerWorld){
-        .groundHeight = VoidHeight, .boxes = level->colliders, .boxCount = (size_t)level->colliderCount,
-    };
+    int count = level->colliderCount;
+    memcpy(boxes, level->colliders, (size_t)count * sizeof(*boxes));
+
+    // The player can move less than one tile in a simulation step.
+    MazeRegion region = NearbyMaze(level, position, COLLISION_RADIUS);
+    for (int row = region.firstRow; row < region.lastRow; ++row)
+        for (int col = region.firstCol; col < region.lastCol; ++col)
+            if (level->maze[row * level->mazeCols + col] == '#')
+                boxes[count++] = MazeWall(level, row, col, col + 1);
+
+    return (PlayerWorld){ .groundHeight = VoidHeight, .boxes = boxes, .boxCount = (size_t)count };
 }
 
 static void Respawn(Campaign *campaign)
@@ -111,7 +150,8 @@ static void Respawn(Campaign *campaign)
     Vector2 spawn = campaign->checkpoint
         ? (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f }
         : level->start;
-    PlayerWorld world = CampaignWorld(campaign);
+    BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
+    PlayerWorld world = CampaignWorld(level, (Vector3){ spawn.x, 0, spawn.y }, boxes);
     campaign->player = SpawnPlayer(spawn, &world);
     campaign->player.feet.y = campaign->checkpoint ? arena.max.y : level->platforms[0].max.y;
     Vector3 eye = GetPlayerEye(&campaign->player);
@@ -332,7 +372,8 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
         .jumpPressed = jump, .sprint = sprint,
     };
     Vector3 oldFeet = campaign->player.feet;
-    PlayerWorld world = CampaignWorld(campaign);
+    BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
+    PlayerWorld world = CampaignWorld(CurrentLevel(campaign), oldFeet, boxes);
     StepPlayer(&campaign->player, &world, controls, dt);
     if (campaign->player.feet.y < -12.0f)
     {
@@ -436,7 +477,7 @@ static void DrawStoneBox(BoundingBox box, Color tint)
     StoneFace(a, b, f, e, 1, side);
 }
 
-static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces)
+static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye)
 {
     rlSetTexture(surfaces->platforms.id);
     rlBegin(RL_QUADS);
@@ -448,13 +489,23 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     rlBegin(RL_QUADS);
     Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
     for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
-    if (level->mazeRows)
+    MazeRegion region = NearbyMaze(level, eye, 32);
+    for (int row = region.firstRow; row < region.lastRow; ++row)
     {
-        // Match the neighboring wall tiles without adding this tile to collision.
-        Vector2 exit = CampaignMazeCellCenter(level, 0, level->mazeExit);
-        float half = CAMPAIGN_MAZE_CELL * 0.5f;
-        DrawStoneBox((BoundingBox){ { exit.x - half, 0, exit.y - half },
-                                    { exit.x + half, CAMPAIGN_MAZE_HEIGHT, exit.y + half } }, wall);
+        const char *tiles = &level->maze[row * level->mazeCols];
+        int col = region.firstCol;
+        while (col < region.lastCol)
+        {
+            if (tiles[col] != '#' && tiles[col] != 'E')
+            {
+                ++col;
+                continue;
+            }
+            int first = col++;
+            // The exit tile looks like its neighbors and has no collider.
+            while (col < region.lastCol && (tiles[col] == '#' || tiles[col] == 'E')) ++col;
+            DrawStoneBox(MazeWall(level, row, first, col), wall);
+        }
     }
     rlEnd();
 
@@ -488,7 +539,7 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
 {
     const LevelSpec *level = CurrentLevel(campaign);
     DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
-    DrawCampaignSurfaces(level, surfaces);
+    DrawCampaignSurfaces(level, surfaces, campaign->camera.position);
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
@@ -562,22 +613,38 @@ static void DrawMazeMap(const Campaign *campaign)
     if (!level->mazeRows || campaign->checkpoint) return;
 
     int maxSize = GetScreenHeight() < 480 ? 94 : 144;
-    int unit = maxSize / (level->mazeRows > level->mazeCols ? level->mazeRows : level->mazeCols);
-    int width = level->mazeCols * unit, height = level->mazeRows * unit;
+    int longest = level->mazeRows > level->mazeCols ? level->mazeRows : level->mazeCols;
+    int unit = maxSize / longest;
+    int visibleRows = level->mazeRows, visibleCols = level->mazeCols;
+    int firstRow = 0, firstCol = 0;
+    if (unit < 2)
+    {
+        unit = 2;
+        int tiles = maxSize / unit;
+        if (visibleRows > tiles) visibleRows = tiles;
+        if (visibleCols > tiles) visibleCols = tiles;
+        Vector2 grid = MazeGridPosition(level, campaign->player.feet);
+        firstRow = (int)Clamp((int)grid.y - visibleRows / 2, 0, level->mazeRows - visibleRows);
+        firstCol = (int)Clamp((int)grid.x - visibleCols / 2, 0, level->mazeCols - visibleCols);
+    }
+
+    int width = visibleCols * unit, height = visibleRows * unit;
     int x = GetScreenWidth() - width - 20, y = 106;
     DrawUiPanel((Rectangle){ (float)x - 6, (float)y - 20, (float)width + 12, (float)height + 26 },
                 (Color){ 12, 20, 29, 223 });
     DrawText("N", x, y - 16, 11, RAYWHITE);
-    for (int i = 0; i < level->mazeRows * level->mazeCols; ++i)
-    {
-        if (!campaign->mazeVisited[i]) continue;
-        DrawRectangle(x + (i % level->mazeCols) * unit, y + (i / level->mazeCols) * unit, unit, unit,
-                      (Color){ 105, 132, 135, 255 });
-    }
     int cell = MazeCellAt(level, campaign->player.feet);
-    if (cell >= 0)
-        DrawRectangle(x + (cell % level->mazeCols) * unit, y + (cell / level->mazeCols) * unit,
-                      unit, unit, RAYWHITE);
+    for (int row = 0; row < visibleRows; ++row)
+    {
+        int start = (firstRow + row) * level->mazeCols + firstCol;
+        for (int col = 0; col < visibleCols; ++col)
+        {
+            int i = start + col;
+            if (!campaign->mazeVisited[i] && i != cell) continue;
+            Color ink = i == cell ? RAYWHITE : (Color){ 105, 132, 135, 255 };
+            DrawRectangle(x + col * unit, y + row * unit, unit, unit, ink);
+        }
+    }
 }
 
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
@@ -589,7 +656,10 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     const char *heading = campaign->endlessLevel ? level->name :
         TextFormat("%d / %d   %s", campaign->level + 1, CAMPAIGN_LEVEL_COUNT, level->name);
     DrawText(heading, 16, 12, 20, RAYWHITE);
-    if (!campaign->debugRun)
+    if (campaign->endlessLevel)
+        DrawText(TextFormat("Lives %d    %d x %d", campaign->lives, level->mazeCols, level->mazeRows),
+                 96, 31, 13, level->trim);
+    else if (!campaign->debugRun)
         DrawText(TextFormat("Lives %d", campaign->lives), 96, 31, 13, level->trim);
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + 23 * i, 51, 17, 10, i < campaign->health ? level->trim : DARKGRAY);

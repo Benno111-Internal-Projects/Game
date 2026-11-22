@@ -26,7 +26,9 @@ size. Other games can call `ToggleGameFullscreen()` from `framework/window.h`.
 
 Choose **Mazes** on the title screen. **Classic** has seven authored mazes and
 nine bosses. **Infinite** generates a new maze after every boss and cycles
-through the nine bosses. Generated mazes grow from 17 × 17 to 29 × 29 cells.
+through the nine bosses. Each generated maze has an independently random
+width and height from 17 to 200 cells. The minimap follows the player in
+large mazes.
 
 Find the hidden passage to the enclosed boss room. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.

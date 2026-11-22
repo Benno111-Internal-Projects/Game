@@ -6,7 +6,7 @@
 #include "player.h"
 #include "player_touch.h"
 
-enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48, CAMPAIGN_MAZE_SIDE = 31 };
+enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48, CAMPAIGN_MAZE_SIDE = 200 };
 
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;

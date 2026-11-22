@@ -3,10 +3,13 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 LevelSpec campaignLevels[CAMPAIGN_LEVEL_COUNT];
+
+enum { AUTHORED_MAZE_SIDE = 31 };
 
 static char *NextLine(char **cursor)
 {
@@ -65,8 +68,8 @@ Vector2 CampaignMazeCellCenter(const LevelSpec *level, int row, int col)
 
 static bool MazeIsConnected(const LevelSpec *level, int start)
 {
-    bool visited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { 0 };
-    int queue[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { start };
+    bool visited[AUTHORED_MAZE_SIDE * AUTHORED_MAZE_SIDE] = { 0 };
+    int queue[AUTHORED_MAZE_SIDE * AUTHORED_MAZE_SIDE] = { start };
     int tail = 1;
     visited[start] = true;
     const int dx[] = { 1, -1, 0, 0 }, dz[] = { 0, 0, 1, -1 };
@@ -136,27 +139,6 @@ static void BuildMaze(LevelSpec *level, int spawn)
     BoundingBox roof = { { -halfWidth, CAMPAIGN_MAZE_HEIGHT, north },
                          { halfWidth, CAMPAIGN_MAZE_HEIGHT + 0.35f, 0 } };
 
-    // Merge horizontal wall tiles into strips for rendering and player collision.
-    for (int row = 0; row < level->mazeRows; ++row)
-    {
-        int col = 0;
-        while (col < level->mazeCols)
-        {
-            if (level->maze[row * level->mazeCols + col] != '#')
-            {
-                ++col;
-                continue;
-            }
-            int first = col;
-            do { ++col; }
-            while (col < level->mazeCols && level->maze[row * level->mazeCols + col] == '#');
-            float z = north + row * CAMPAIGN_MAZE_CELL;
-            level->colliders[level->colliderCount++] = (BoundingBox){
-                { first * CAMPAIGN_MAZE_CELL - halfWidth, 0, z },
-                { col * CAMPAIGN_MAZE_CELL - halfWidth, CAMPAIGN_MAZE_HEIGHT, z + CAMPAIGN_MAZE_CELL },
-            };
-        }
-    }
     AddArenaWalls(level);
     level->colliders[level->colliderCount++] = roof;
 }
@@ -165,8 +147,8 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
 {
     float size[2];
     if (!ReadNumbers(ReadField(&cursor, "maze"), size, 2) ||
-        size[0] < 7 || size[0] > CAMPAIGN_MAZE_SIDE || floorf(size[0]) != size[0] ||
-        size[1] < 7 || size[1] > CAMPAIGN_MAZE_SIDE || floorf(size[1]) != size[1]) return false;
+        size[0] < 7 || size[0] > AUTHORED_MAZE_SIDE || floorf(size[0]) != size[0] ||
+        size[1] < 7 || size[1] > AUTHORED_MAZE_SIDE || floorf(size[1]) != size[1]) return false;
     level->mazeRows = (int)size[0];
     level->mazeCols = (int)size[1];
     level->mazeExit = -1;
@@ -196,19 +178,22 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
 void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
 {
     int layout = (int)((stage - 1) % CAMPAIGN_LEVEL_COUNT);
-    int side = 17 + 2 * (int)(stage < 7 ? stage - 1 : 6);
+    int rows = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
+    int cols = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
     const LevelSpec *palette = &campaignLevels[layout];
     *level = (LevelSpec){
         .stone = palette->stone, .trim = palette->trim,
-        .mazeRows = side, .mazeCols = side,
+        .mazeRows = rows, .mazeCols = cols,
         .firstBoss = (int)((stage - 1) % CAMPAIGN_BOSS_COUNT), .bossCount = 1,
     };
     snprintf(level->name, sizeof(level->name), "Infinite maze %llu", stage);
     memset(level->maze, '#', sizeof(level->maze));
-    int exit = 1 + 2 * GetRandomValue(0, (side - 3) / 2);
+    int exit = 1 + 2 * GetRandomValue(0, (cols - 3) / 2);
     level->mazeExit = exit;
     level->maze[exit] = 'E';
-    int path[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE] = { side + exit };
+    // Depth-first carving visits only odd-numbered interior rows and columns.
+    enum { MAX_ROOMS = ((CAMPAIGN_MAZE_SIDE - 1) / 2) * ((CAMPAIGN_MAZE_SIDE - 1) / 2) };
+    uint16_t path[MAX_ROOMS] = { (uint16_t)(cols + exit) };
     int depth = 1, deepest = 0, spawn = path[0];
     level->maze[spawn] = '.';
     const int dx[] = { 2, -2, 0, 0 }, dz[] = { 0, 0, 2, -2 };
@@ -217,9 +202,9 @@ void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
         int cell = path[depth - 1], candidates[4], count = 0;
         for (int i = 0; i < 4; ++i)
         {
-            int x = cell % side + dx[i], z = cell / side + dz[i];
-            if (x > 0 && x < side - 1 && z > 0 && z < side - 1 &&
-                level->maze[z * side + x] == '#') candidates[count++] = z * side + x;
+            int x = cell % cols + dx[i], z = cell / cols + dz[i];
+            if (x > 0 && x < cols - 1 && z > 0 && z < rows - 1 &&
+                level->maze[z * cols + x] == '#') candidates[count++] = z * cols + x;
         }
         if (count == 0)
         {
@@ -228,7 +213,7 @@ void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
         }
         int next = candidates[GetRandomValue(0, count - 1)];
         level->maze[(cell + next) / 2] = level->maze[next] = '.';
-        path[depth++] = next;
+        path[depth++] = (uint16_t)next;
         if (depth > deepest)
         {
             deepest = depth;
@@ -288,9 +273,8 @@ static bool ReadLevel(char *cursor, LevelSpec *level)
     return valid;
 }
 
-bool LoadCampaignLevels(const char *directory)
+static bool ReadLevelPack(const char *directory, LevelSpec *levels)
 {
-    LevelSpec levels[CAMPAIGN_LEVEL_COUNT] = { 0 };
     unsigned int bossMask = 0;
     for (int i = 0; i < CAMPAIGN_LEVEL_COUNT; ++i)
     {
@@ -325,6 +309,15 @@ bool LoadCampaignLevels(const char *directory)
         TraceLog(LOG_ERROR, "Campaign level pack must use all %d bosses", CAMPAIGN_BOSS_COUNT);
         return false;
     }
-    memcpy(campaignLevels, levels, sizeof(levels));
     return true;
+}
+
+bool LoadCampaignLevels(const char *directory)
+{
+    LevelSpec *levels = calloc(CAMPAIGN_LEVEL_COUNT, sizeof(*levels));
+    if (!levels) return false;
+    bool valid = ReadLevelPack(directory, levels);
+    if (valid) memcpy(campaignLevels, levels, sizeof(campaignLevels));
+    free(levels);
+    return valid;
 }
