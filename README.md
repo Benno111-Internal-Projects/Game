@@ -36,7 +36,9 @@ hold **Left Shift** to sprint.
 Every world spans 1,024 × 1,024 units and uses 32 × 32-unit terrain chunks.
 The landscape builds nearby chunks as they enter the camera view and frees
 chunks left behind. Collision samples the same terrain grid, including
-terrain beyond the current view.
+terrain beyond the current view. Terrain blends ground, sediment, and rock
+textures by elevation and slope. The textures use world coordinates so they
+line up across chunks. The Sandbox terrain editor previews the same layers.
 
 ### Edit and ship world updates
 

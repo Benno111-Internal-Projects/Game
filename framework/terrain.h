@@ -7,6 +7,11 @@ enum { TERRAIN_SIDE = 33, TERRAIN_SAMPLES = TERRAIN_SIDE * TERRAIN_SIDE };
 
 typedef float (*TerrainHeightSource)(const void *data, float x, float z);
 
+typedef struct TerrainLayers {
+    Material material;
+    int elevationLocation;
+} TerrainLayers;
+
 typedef struct TerrainMap {
     float heights[TERRAIN_SAMPLES]; // Offsets from baseHeight, in row-major order.
     float baseHeight;
@@ -33,6 +38,11 @@ float SampleTerrainGrid(TerrainHeightSource source, const void *data, Vector2 or
 void UnloadTerrainMap(TerrainMap *map);
 void SyncTerrainMesh(TerrainMap *map);
 void DrawTerrainMap(const TerrainMap *map);
+// One shared material can be reused by any number of streamed chunks.
+bool LoadTerrainLayers(TerrainLayers *layers, const char *assetDir, const char *shaderDir);
+void UnloadTerrainLayers(TerrainLayers *layers);
+void SetTerrainLayerElevation(const TerrainLayers *layers, float baseHeight, float heightRange);
+void DrawLayeredTerrainMap(const TerrainMap *map, const TerrainLayers *layers);
 float GetTerrainHeight(const TerrainMap *map, float x, float z);
 Vector3 GetTerrainNormal(const TerrainMap *map, float x, float z);
 RayCollision PickTerrain(const TerrainMap *map, Ray ray);

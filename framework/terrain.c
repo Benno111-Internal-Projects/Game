@@ -1,5 +1,6 @@
 #include "terrain.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -44,6 +45,9 @@ static void FillVertices(TerrainMap *map)
             Vector3 dx = Vector3Subtract(NeighborPoint(map, x + 1, z), NeighborPoint(map, x - 1, z));
             Vector3 dz = Vector3Subtract(NeighborPoint(map, x, z + 1), NeighborPoint(map, x, z - 1));
             Vector3 normal = Vector3Normalize(Vector3CrossProduct(dz, dx));
+            map->mesh.normals[3 * i] = normal.x;
+            map->mesh.normals[3 * i + 1] = normal.y;
+            map->mesh.normals[3 * i + 2] = normal.z;
             float shade = 0.42f + 0.58f * fmaxf(Vector3DotProduct(normal, light), 0.0f);
             float elevation = (map->heights[i] + 2.0f) / 6.0f;
             if (map->source)
@@ -68,9 +72,10 @@ static bool InitMesh(TerrainMap *map, bool dynamic)
     mesh->vertexCount = TERRAIN_SAMPLES;
     mesh->triangleCount = cells * cells * 2;
     mesh->vertices = MemAlloc(TERRAIN_SAMPLES * 3 * sizeof(float));
+    mesh->normals = MemAlloc(TERRAIN_SAMPLES * 3 * sizeof(float));
     mesh->colors = MemAlloc(TERRAIN_SAMPLES * 4);
     mesh->indices = MemAlloc((unsigned int)mesh->triangleCount * 3 * sizeof(unsigned short));
-    if (!mesh->vertices || !mesh->colors || !mesh->indices)
+    if (!mesh->vertices || !mesh->normals || !mesh->colors || !mesh->indices)
     {
         UnloadTerrainMap(map);
         return false;
@@ -93,7 +98,7 @@ static bool InitMesh(TerrainMap *map, bool dynamic)
     }
     UploadMesh(mesh, dynamic);
     map->material = LoadMaterialDefault();
-    if (!mesh->vboId || !mesh->vboId[0] || !mesh->vboId[3] || !mesh->vboId[6] || !map->material.maps)
+    if (!mesh->vboId || !mesh->vboId[0] || !mesh->vboId[2] || !mesh->vboId[3] || !mesh->vboId[6] || !map->material.maps)
     {
         UnloadTerrainMap(map);
         return false;
@@ -138,12 +143,61 @@ void SyncTerrainMesh(TerrainMap *map)
 {
     FillVertices(map);
     UpdateMeshBuffer(map->mesh, 0, map->mesh.vertices, TERRAIN_SAMPLES * 3 * sizeof(float), 0);
+    UpdateMeshBuffer(map->mesh, 2, map->mesh.normals, TERRAIN_SAMPLES * 3 * sizeof(float), 0);
     UpdateMeshBuffer(map->mesh, 3, map->mesh.colors, TERRAIN_SAMPLES * 4, 0);
 }
 
 void DrawTerrainMap(const TerrainMap *map)
 {
     if (map->enabled) DrawMesh(map->mesh, map->material, MatrixIdentity());
+}
+
+bool LoadTerrainLayers(TerrainLayers *layers, const char *assetDir, const char *shaderDir)
+{
+    *layers = (TerrainLayers){ .material = LoadMaterialDefault() };
+    if (!layers->material.maps) return false;
+    Shader shader = LoadShader(TextFormat("%sterrain.vert", shaderDir), TextFormat("%sterrain.frag", shaderDir));
+    if (!IsShaderValid(shader) || shader.id == rlGetShaderIdDefault()) goto failure;
+    layers->material.shader = shader;
+    layers->elevationLocation = GetShaderLocation(shader, "elevation");
+    if (layers->elevationLocation < 0) goto failure;
+
+    static const char *const names[] = { "ground", "sediment", "rock" };
+    for (int i = 0; i < 3; ++i)
+    {
+        int slot = MATERIAL_MAP_ALBEDO + i;
+        int location = GetShaderLocation(shader, names[i]);
+        if (location < 0) goto failure;
+        shader.locs[SHADER_LOC_MAP_ALBEDO + i] = location;
+        Texture2D texture = LoadTexture(TextFormat("%sterrain/%s.png", assetDir, names[i]));
+        if (!IsTextureValid(texture)) goto failure;
+        GenTextureMipmaps(&texture);
+        SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(texture, TEXTURE_WRAP_REPEAT);
+        SetMaterialTexture(&layers->material, slot, texture);
+    }
+    return true;
+
+failure:
+    UnloadTerrainLayers(layers);
+    return false;
+}
+
+void UnloadTerrainLayers(TerrainLayers *layers)
+{
+    if (layers->material.maps) UnloadMaterial(layers->material);
+    *layers = (TerrainLayers){0};
+}
+
+void SetTerrainLayerElevation(const TerrainLayers *layers, float baseHeight, float heightRange)
+{
+    Vector2 elevation = { baseHeight, 1.0f / fmaxf(heightRange, 1.0f) };
+    SetShaderValue(layers->material.shader, layers->elevationLocation, &elevation, SHADER_UNIFORM_VEC2);
+}
+
+void DrawLayeredTerrainMap(const TerrainMap *map, const TerrainLayers *layers)
+{
+    if (map->enabled) DrawMesh(map->mesh, layers->material, MatrixIdentity());
 }
 
 static float TerrainTriangle(float a, float b, float c, float d, float spacing,

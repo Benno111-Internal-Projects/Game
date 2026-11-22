@@ -1,7 +1,6 @@
 #include "world_campaign.h"
 
 #include "raymath.h"
-#include "terrain.h"
 #include "ui.h"
 #include "world_levels.h"
 
@@ -214,12 +213,13 @@ bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 
     return true;
 }
 
-void DrawWorldLandscape(const WorldCampaign *campaign)
+void DrawWorldLandscape(const WorldCampaign *campaign, const TerrainLayers *layers)
 {
-    for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i)
-        if (campaign->chunks[i].visible) DrawTerrainMap(&campaign->chunks[i].map);
-
     const WorldSpec *world = &worlds[campaign->world];
+    SetTerrainLayerElevation(layers, 0, world->relief);
+    for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i)
+        if (campaign->chunks[i].visible) DrawLayeredTerrainMap(&campaign->chunks[i].map, layers);
+
     Vector2 target = Destination(campaign);
     Vector2 eye = { campaign->camera.position.x, campaign->camera.position.z };
     if (Vector2DistanceSqr(eye, target) > 145.0f * 145.0f) return;

@@ -5,6 +5,7 @@
 #include "input.h"
 #include "player.h"
 #include "player_touch.h"
+#include "terrain.h"
 
 typedef struct WorldChunk WorldChunk;
 
@@ -24,7 +25,7 @@ void CloseWorldCampaign(WorldCampaign *campaign);
 // Returns false when the player chooses to return to the title screen.
 bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 movement,
                          bool jump, bool sprint, bool retry, bool escape, bool enter, float dt);
-void DrawWorldLandscape(const WorldCampaign *campaign);
+void DrawWorldLandscape(const WorldCampaign *campaign, const TerrainLayers *layers);
 void DrawWorldCampaignHud(const WorldCampaign *campaign, InputPointer pointer);
 
 #endif

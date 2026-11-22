@@ -136,6 +136,7 @@ typedef struct StarterGame {
     WorldEditor worldEditor;
     LevelSpec endlessLevel;
     CampaignSurfaces campaignSurfaces;
+    TerrainLayers terrainLayers;
     SceneEditor editor;
     float titleTime;
     Vector2 titlePointer;
@@ -166,7 +167,8 @@ static bool InitStarter(void *state)
 #endif
     if (!LoadWorldLevels(TextFormat("%sworlds", assetsDir)) ||
         !LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
-        !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir)) return false;
+        !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir) ||
+        !LoadTerrainLayers(&game->terrainLayers, assetsDir, shadersDir)) return false;
     LoadWorldOverrides();
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
@@ -738,7 +740,7 @@ static void DrawStarter(const void *state)
     {
         BeginMode3D(game->worlds.camera);
         DrawSky(game->sky, game->worlds.camera.position);
-        DrawWorldLandscape(&game->worlds);
+        DrawWorldLandscape(&game->worlds, &game->terrainLayers);
         EndMode3D();
         DrawWorldCampaignHud(&game->worlds, (InputPointer){ .position = game->titlePointer });
         return;
@@ -780,7 +782,11 @@ static void DrawStarter(const void *state)
     Camera3D camera = game->editorOpen ? GetEditorCamera(&game->editor) : game->camera;
     BeginMode3D(camera);
     if (game->editorOpen || game->showSky) DrawSky(game->sky, camera.position);
-    if (game->editor.terrain.enabled) DrawTerrainMap(&game->editor.terrain);
+    if (game->editor.terrain.enabled)
+    {
+        SetTerrainLayerElevation(&game->terrainLayers, game->editor.terrain.baseHeight, 5);
+        DrawLayeredTerrainMap(&game->editor.terrain, &game->terrainLayers);
+    }
     else if (game->editorOpen || game->grid)
     {
         rlPushMatrix();
@@ -853,6 +859,7 @@ static void ShutdownStarter(void *state)
     CloseWorldCampaign(&game->worlds);
     CloseWorldEditor(&game->worldEditor);
     UnloadCampaignSurfaces(game->campaignSurfaces);
+    UnloadTerrainLayers(&game->terrainLayers);
     UnloadTerrainMap(&game->editor.terrain);
     UnloadSceneMusic(&game->music);
     DestroyAudioVoice(&game->dropVoice);
