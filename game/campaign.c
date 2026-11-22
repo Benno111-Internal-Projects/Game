@@ -299,7 +299,7 @@ static bool DamagePlayer(Campaign *campaign, Vector3 origin, CampaignDeath cause
     Vector2 push = Vector2Scale(Vector2Normalize((Vector2){ away.x, away.z }), 3.8f);
     campaign->player.velocity = (Vector3){ push.x, 4.1f, push.y };
     campaign->player.grounded = false;
-    campaign->player.groundGrace = campaign->player.jumpBuffer = 0;
+    campaign->player.groundGrace = 0;
     return false;
 }
 

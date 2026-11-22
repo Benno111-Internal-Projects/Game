@@ -145,7 +145,7 @@ static void MoveVertical(PlayerController *player, const PlayerWorld *world, flo
 
 void StepPlayer(PlayerController *player, const PlayerWorld *world, PlayerInput input, float dt)
 {
-    if (input.jumpPressed) player->jumpBuffer = 0.12f;
+    if (input.jumpPressed) player->jumpBuffered = true;
     if (!(dt > 0.0f)) return;
     dt = fminf(dt, 0.1f);
     int steps = (int)ceilf(dt * 120.0f);
@@ -153,18 +153,18 @@ void StepPlayer(PlayerController *player, const PlayerWorld *world, PlayerInput 
     Vector2 movement = input.movement;
     float length = Vector2Length(movement);
     if (length > 1) movement = Vector2Scale(movement, 1 / length);
-    Vector2 desired = Vector2Scale(movement, input.sprint ? 6.1f : 4.1f);
+    Vector2 desired = Vector2Scale(movement, input.sprint ? 18.3f : 4.1f);
 
     for (int i = 0; i < steps; ++i)
     {
         player->groundGrace = player->grounded ? 0.08f : (player->sliding ? 0 : fmaxf(0, player->groundGrace - step));
-        if (player->jumpBuffer > 0 && player->groundGrace > 0)
+        if (player->jumpBuffered && player->groundGrace > 0)
         {
             player->velocity.y = 9.1f;
             player->grounded = false;
-            player->groundGrace = player->jumpBuffer = 0;
+            player->groundGrace = 0;
+            player->jumpBuffered = false;
         }
-        player->jumpBuffer = fmaxf(0, player->jumpBuffer - step);
 
         bool followGround = (player->grounded || player->sliding) &&
             fabsf(player->feet.y - FloorAt(world, player->feet)) <= 2 * contact;

@@ -29,7 +29,9 @@ or press **Enter** in the picker to play the full campaign. The route crosses Wi
 Frostglass Range, and Crown Plateau. Activate three beacons in each world, then
 follow the heading in the HUD to the world gate. The last beacon reached is
 your checkpoint. **R** retries it, and **Esc** opens the pause menu. Mobile uses
-the on-screen movement stick, look gesture, Jump, and Pause controls.
+the on-screen movement stick, look gesture, Jump, and Pause controls. Press
+jump anytime in the air to queue one jump for your next landing. On desktop,
+hold **Left Shift** to sprint.
 
 Every world spans 1,024 × 1,024 units and uses 32 × 32-unit terrain chunks.
 The landscape builds nearby chunks as they enter the camera view and frees

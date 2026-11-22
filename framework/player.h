@@ -19,7 +19,8 @@ typedef struct PlayerController {
     Vector3 feet;
     Vector3 velocity;
     float radius, height, eyeHeight;
-    float jumpBuffer, groundGrace;
+    float groundGrace;
+    bool jumpBuffered; // One queued jump, consumed by the next jump opportunity.
     bool grounded;
     bool sliding;
 } PlayerController;
