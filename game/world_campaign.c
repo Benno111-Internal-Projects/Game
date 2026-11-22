@@ -5,16 +5,25 @@
 #include "world_levels.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 
 enum {
     CHUNK_SIDE = TERRAIN_SIDE - 1, CHUNKS_PER_SIDE = WORLD_SIDE / CHUNK_SIDE,
-    CHUNK_RADIUS = 5, CACHE_SIDE = 2 * CHUNK_RADIUS + 1
+    CHUNK_RADIUS = 5, CACHE_SIDE = 2 * CHUNK_RADIUS + 1,
+    TREES_PER_CHUNK = 6, TREE_BOXES = 9 * TREES_PER_CHUNK
 };
+
+typedef struct BasinTree {
+    Vector3 base;
+    float scale;
+} BasinTree;
 
 struct WorldChunk {
     TerrainMap map;
     int col, row;
     bool visible;
+    int treeCount;
+    BasinTree trees[TREES_PER_CHUNK];
 };
 
 static float GroundHeight(const void *data, float x, float z)
@@ -29,12 +38,65 @@ static Vector3 GroundNormal(const void *data, float x, float z)
     return normal;
 }
 
-static PlayerWorld WorldPhysics(const WorldCampaign *campaign)
+static float TreeVariation(uint32_t seed)
 {
-    return (PlayerWorld){
-        .groundHeight = GroundHeight, .groundNormal = GroundNormal,
-        .ground = &worlds[campaign->world],
-    };
+    seed ^= seed >> 16;
+    seed *= 0x7feb352du;
+    seed ^= seed >> 15;
+    seed *= 0x846ca68bu;
+    seed ^= seed >> 16;
+    return (seed & 0xffffu) / 65535.0f;
+}
+
+static bool BasinTreeAt(const WorldSpec *world, int col, int row, int slot, BasinTree *tree)
+{
+    uint32_t seed = (uint32_t)((row * CHUNKS_PER_SIDE + col) * TREES_PER_CHUNK + slot) * 17u + 1u;
+    float x = (col + (slot % 3 + 0.16f + 0.68f * TreeVariation(seed)) / 3.0f) * CHUNK_SIDE;
+    float z = (row + (slot / 3 + 0.16f + 0.68f * TreeVariation(seed + 1u)) / 2.0f) * CHUNK_SIDE;
+    if (TreeVariation(seed + 2u) < 0.18f) return false;
+    Vector2 point = { x, z };
+    Vector2 from = world->spawn;
+    for (int i = 0; i <= WAYPOINT_COUNT; ++i)
+    {
+        Vector2 to = i == WAYPOINT_COUNT ? world->gate : world->waypoints[i];
+        Vector2 leg = Vector2Subtract(to, from);
+        float along = Clamp(Vector2DotProduct(Vector2Subtract(point, from), leg) /
+                            fmaxf(Vector2LengthSqr(leg), 1.0f), 0, 1);
+        Vector2 nearest = Vector2Add(from, Vector2Scale(leg, along));
+        if (Vector2DistanceSqr(point, nearest) < 7.0f * 7.0f) return false;
+        from = to;
+    }
+    *tree = (BasinTree){ { x, 0, z }, 0.80f + 0.50f * TreeVariation(seed + 3u) };
+    return true;
+}
+
+static PlayerWorld WorldPhysics(const WorldCampaign *campaign, Vector2 position, BoundingBox *boxes)
+{
+    const WorldSpec *world = &worlds[campaign->world];
+    PlayerWorld physics = { .groundHeight = GroundHeight, .groundNormal = GroundNormal,
+                            .ground = world, .boxes = boxes };
+    if (campaign->world != 0) return physics;
+
+    // Check neighboring chunks regardless of the render camera.
+    int col = (int)(position.x / CHUNK_SIDE), row = (int)(position.y / CHUNK_SIDE);
+    for (int z = row - 1; z <= row + 1; ++z)
+        for (int x = col - 1; x <= col + 1; ++x)
+        {
+            if (x < 0 || z < 0 || x >= CHUNKS_PER_SIDE || z >= CHUNKS_PER_SIDE) continue;
+            for (int slot = 0; slot < TREES_PER_CHUNK; ++slot)
+            {
+                BasinTree tree;
+                if (!BasinTreeAt(world, x, z, slot, &tree) ||
+                    Vector2DistanceSqr(position, (Vector2){ tree.base.x, tree.base.z }) > 9) continue;
+                tree.base.y = GroundHeight(world, tree.base.x, tree.base.z);
+                float half = 0.34f * tree.scale;
+                boxes[physics.boxCount++] = (BoundingBox){
+                    { tree.base.x - half, tree.base.y - 0.30f, tree.base.z - half },
+                    { tree.base.x + half, tree.base.y + 4.2f * tree.scale, tree.base.z + half },
+                };
+            }
+        }
+    return physics;
 }
 
 static Vector2 Destination(const WorldCampaign *campaign)
@@ -48,7 +110,8 @@ static void RespawnWorld(WorldCampaign *campaign)
     const WorldSpec *world = &worlds[campaign->world];
     Vector2 spawn = campaign->waypoint ? world->waypoints[campaign->waypoint - 1] : world->spawn;
     Vector2 target = Vector2Subtract(Destination(campaign), spawn);
-    PlayerWorld physics = WorldPhysics(campaign);
+    BoundingBox boxes[TREE_BOXES];
+    PlayerWorld physics = WorldPhysics(campaign, spawn, boxes);
     campaign->player = SpawnPlayer(spawn, &physics);
     campaign->view = (WalkCamera){ .position = GetPlayerEye(&campaign->player),
                                     .yaw = atan2f(target.x, target.y), .pitch = -0.06f };
@@ -99,6 +162,8 @@ static void UpdateChunks(WorldCampaign *campaign)
     int centerCol = (int)(campaign->player.feet.x / CHUNK_SIDE);
     int centerRow = (int)(campaign->player.feet.z / CHUNK_SIDE);
     TerrainView view = LandscapeView(campaign->camera);
+    float extent = world->relief + (world->brushCount ? WORLD_BRUSH_LIMIT : 0);
+    if (campaign->world == 0) extent += 10.0f;
     for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i)
     {
         WorldChunk *chunk = &campaign->chunks[i];
@@ -112,7 +177,7 @@ static void UpdateChunks(WorldCampaign *campaign)
         for (int col = centerCol - CHUNK_RADIUS; col <= centerCol + CHUNK_RADIUS; ++col)
         {
             if (col < 0 || row < 0 || col >= CHUNKS_PER_SIDE || row >= CHUNKS_PER_SIDE ||
-                !ChunkInView(view, col, row, world->relief + (world->brushCount ? WORLD_BRUSH_LIMIT : 0))) continue;
+                !ChunkInView(view, col, row, extent)) continue;
             WorldChunk *chunk = &campaign->chunks[(row % CACHE_SIDE) * CACHE_SIDE + col % CACHE_SIDE];
             if (!chunk->map.enabled)
             {
@@ -121,6 +186,15 @@ static void UpdateChunks(WorldCampaign *campaign)
                     continue;
                 chunk->col = col;
                 chunk->row = row;
+                chunk->treeCount = 0;
+                if (campaign->world == 0)
+                    for (int slot = 0; slot < TREES_PER_CHUNK; ++slot)
+                    {
+                        BasinTree tree;
+                        if (!BasinTreeAt(world, col, row, slot, &tree)) continue;
+                        tree.base.y = GroundHeight(world, tree.base.x, tree.base.z);
+                        chunk->trees[chunk->treeCount++] = tree;
+                    }
             }
             chunk->visible = true;
         }
@@ -183,7 +257,9 @@ bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 
     Vector2 forward = { sinf(campaign->view.yaw), cosf(campaign->view.yaw) };
     Vector2 right = { -forward.y, forward.x };
     movement = Vector2Add(movement, mobile.movement);
-    PlayerWorld physics = WorldPhysics(campaign);
+    BoundingBox boxes[TREE_BOXES];
+    Vector2 feet = { campaign->player.feet.x, campaign->player.feet.z };
+    PlayerWorld physics = WorldPhysics(campaign, feet, boxes);
     StepPlayer(&campaign->player, &physics, (PlayerInput){
         .movement = Vector2Add(Vector2Scale(right, movement.x), Vector2Scale(forward, movement.y)),
         .jumpPressed = jump || mobile.jumpPressed, .sprint = sprint,
@@ -213,12 +289,38 @@ bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 
     return true;
 }
 
+static void DrawBasinTree(BasinTree tree, Vector3 eye)
+{
+    float scale = tree.scale;
+    Vector3 base = tree.base;
+    base.y -= 0.30f;
+    DrawCylinder(base, 0.21f * scale, 0.44f * scale, 4.5f * scale, 6, (Color){ 103, 73, 49, 255 });
+    Vector3 crown = Vector3Add(base, (Vector3){ 0, 4.65f * scale, 0 });
+    bool nearby = Vector3DistanceSqr(eye, crown) < 55.0f * 55.0f;
+    DrawSphereEx(crown, 2.05f * scale, nearby ? 6 : 3, nearby ? 9 : 6, (Color){ 72, 123, 56, 255 });
+    if (nearby)
+    {
+        Vector3 bough = Vector3Add(crown, (Vector3){ 1.20f * scale, -0.55f * scale, 0.55f * scale });
+        DrawSphereEx(bough, 1.44f * scale, 4, 7, (Color){ 91, 145, 62, 255 });
+        bough = Vector3Add(crown, (Vector3){ -1.35f * scale, -0.62f * scale, -0.45f * scale });
+        DrawSphereEx(bough, 1.48f * scale, 4, 7, (Color){ 54, 100, 49, 255 });
+    }
+}
+
 void DrawWorldLandscape(const WorldCampaign *campaign, const TerrainLayers *layers)
 {
     const WorldSpec *world = &worlds[campaign->world];
     SetTerrainLayerElevation(layers, 0, world->relief);
     for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i)
         if (campaign->chunks[i].visible) DrawLayeredTerrainMap(&campaign->chunks[i].map, layers);
+
+    for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i)
+    {
+        const WorldChunk *chunk = &campaign->chunks[i];
+        if (!chunk->visible) continue;
+        for (int tree = 0; tree < chunk->treeCount; ++tree)
+            DrawBasinTree(chunk->trees[tree], campaign->camera.position);
+    }
 
     Vector2 target = Destination(campaign);
     Vector2 eye = { campaign->camera.position.x, campaign->camera.position.z };

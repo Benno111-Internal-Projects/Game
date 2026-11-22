@@ -1,5 +1,6 @@
 #include "world_editor.h"
 #include "raymath.h"
+#include "player_touch.h"
 #include "ui.h"
 
 #include <stdio.h>
@@ -63,19 +64,19 @@ static Rectangle ToolBounds(int tool)
     return (Rectangle){ left + (tool % 2) * (width + 4), 53 + (tool / 2) * step, width, step - 4 };
 }
 
-static void RefreshMap(WorldEditor *editor, const WorldBrush *brush)
+static void RefreshMap(WorldEditor *editor, const WorldBrush *first, const WorldBrush *last)
 {
     enum { PREVIEW_SIDE = 128 };
     Color pixels[PREVIEW_SIDE * PREVIEW_SIDE];
     const WorldSpec *world = &editor->draft;
     float scale = (float)WORLD_SIDE / PREVIEW_SIDE;
     int left = 0, top = 0, right = PREVIEW_SIDE, bottom = PREVIEW_SIDE;
-    if (editor->map.id && brush)
+    if (editor->map.id && first)
     {
-        left = (int)fmaxf(0, floorf((brush->center.x - brush->radius) / scale));
-        top = (int)fmaxf(0, floorf((brush->center.y - brush->radius) / scale));
-        right = (int)fminf(PREVIEW_SIDE, ceilf((brush->center.x + brush->radius) / scale));
-        bottom = (int)fminf(PREVIEW_SIDE, ceilf((brush->center.y + brush->radius) / scale));
+        left = (int)fmaxf(0, floorf((fminf(first->center.x, last->center.x) - first->radius) / scale));
+        top = (int)fmaxf(0, floorf((fminf(first->center.y, last->center.y) - first->radius) / scale));
+        right = (int)fminf(PREVIEW_SIDE, ceilf((fmaxf(first->center.x, last->center.x) + first->radius) / scale));
+        bottom = (int)fminf(PREVIEW_SIDE, ceilf((fmaxf(first->center.y, last->center.y) + first->radius) / scale));
     }
     int width = right - left;
     for (int row = top; row < bottom; ++row)
@@ -97,10 +98,11 @@ static void RefreshMap(WorldEditor *editor, const WorldBrush *brush)
 
 bool OpenWorldEditor(WorldEditor *editor, int world)
 {
-    WorldEditor opened = { .world = world, .radius = 40 };
+    WorldEditor opened = { .world = world, .touchId = -1, .radius = 40 };
+    if (HasPlayerTouchControls() && GetTouchPointCount() > 0) opened.touchId = GetTouchPointId(0);
     if (!CopyWorldSpec(&opened.draft, &worlds[world])) return false;
     *editor = opened;
-    RefreshMap(editor, NULL);
+    RefreshMap(editor, NULL, NULL);
     return true;
 }
 
@@ -111,30 +113,65 @@ void CloseWorldEditor(WorldEditor *editor)
     *editor = (WorldEditor){0};
 }
 
-static void EditPoint(WorldEditor *editor, Vector2 point)
+static InputPointer WorldEditorPointer(WorldEditor *editor, InputPointer pointer)
+{
+    if (!HasPlayerTouchControls()) return pointer;
+    int count = GetTouchPointCount();
+    if (count == 0)
+    {
+        if (editor->touchId >= 0) pointer.down = pointer.pressed = false;
+        editor->touchId = -1;
+        return pointer;
+    }
+    bool started = editor->touchId < 0;
+    if (started) editor->touchId = GetTouchPointId(0);
+    pointer.pressed = pointer.down = false;
+    for (int i = 0; i < count; ++i)
+    {
+        if (GetTouchPointId(i) != editor->touchId) continue;
+        pointer.position = GetTouchPosition(i);
+        pointer.down = true;
+        pointer.pressed = started;
+        break;
+    }
+    return pointer;
+}
+
+static void PaintTo(WorldEditor *editor, Vector2 point, bool started)
 {
     WorldSpec *world = &editor->draft;
-    if (editor->tool == TOOL_RAISE || editor->tool == TOOL_LOWER)
+    size_t first = world->brushCount;
+    float step = editor->radius * 0.5f;
+    Vector2 delta = Vector2Subtract(point, editor->lastBrush);
+    float distance = Vector2Length(delta);
+    Vector2 direction = Vector2Normalize(delta);
+    int count = started ? 1 : (int)(distance / step);
+    for (int i = 0; i < count; ++i)
     {
+        Vector2 center = started ? point : Vector2Add(editor->lastBrush, Vector2Scale(direction, step));
         float height = editor->tool == TOOL_RAISE ? 3 : -3;
-        if (!AddWorldBrush(world, (WorldBrush){ point, editor->radius, height }))
+        if (!AddWorldBrush(world, (WorldBrush){ center, editor->radius, height }))
         {
+            editor->brushing = false;
             editor->status = "Could not allocate terrain edit";
-            return;
+            break;
         }
-        RefreshMap(editor, &world->brushes[world->brushCount - 1]);
+        editor->lastBrush = center;
     }
-    else if (editor->tool == TOOL_SPAWN) world->spawn = point;
-    else if (editor->tool == TOOL_GATE) world->gate = point;
-    else world->waypoints[editor->tool - TOOL_FIRST_BEACON] = point;
-    editor->status = "Unsaved changes";
+    if (world->brushCount != first)
+    {
+        RefreshMap(editor, &world->brushes[first], &world->brushes[world->brushCount - 1]);
+        if (editor->brushing) editor->status = "Unsaved changes";
+    }
 }
 
 bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer)
 {
+    pointer = WorldEditorPointer(editor, pointer);
     for (int i = 0; i < TOOL_COUNT; ++i)
     {
         if (!ReadUiButton(ToolBounds(i), pointer, true).activated) continue;
+        editor->brushing = false;
         if (i == TOOL_BACK) return false;
         if (i <= TOOL_GATE) editor->tool = i;
         else if (i == TOOL_SMALLER) editor->radius = fmaxf(8, editor->radius - 8);
@@ -143,7 +180,8 @@ bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer)
         {
             --editor->draft.brushCount;
             editor->status = "Unsaved changes";
-            RefreshMap(editor, &editor->draft.brushes[editor->draft.brushCount]);
+            const WorldBrush *removed = &editor->draft.brushes[editor->draft.brushCount];
+            RefreshMap(editor, removed, removed);
         }
         else if (i == TOOL_SAVE)
         {
@@ -155,11 +193,25 @@ bool UpdateWorldEditor(WorldEditor *editor, InputPointer pointer)
         return true;
     }
     Rectangle map = MapBounds();
-    if (pointer.pressed && CheckCollisionPointRec(pointer.position, map))
+    if (!CheckCollisionPointRec(pointer.position, map) || (!pointer.down && !pointer.pressed))
     {
-        Vector2 point = { Clamp((pointer.position.x - map.x) * WORLD_SIDE / map.width, 4, WORLD_SIDE - 4),
-                          Clamp((pointer.position.y - map.y) * WORLD_SIDE / map.height, 4, WORLD_SIDE - 4) };
-        EditPoint(editor, point);
+        editor->brushing = false;
+        return true;
+    }
+    Vector2 point = { Clamp((pointer.position.x - map.x) * WORLD_SIDE / map.width, 4, WORLD_SIDE - 4),
+                      Clamp((pointer.position.y - map.y) * WORLD_SIDE / map.height, 4, WORLD_SIDE - 4) };
+    if (editor->tool <= TOOL_LOWER)
+    {
+        if (pointer.pressed) editor->brushing = true;
+        if (editor->brushing) PaintTo(editor, point, pointer.pressed);
+    }
+    else if (pointer.pressed)
+    {
+        WorldSpec *world = &editor->draft;
+        if (editor->tool == TOOL_SPAWN) world->spawn = point;
+        else if (editor->tool == TOOL_GATE) world->gate = point;
+        else world->waypoints[editor->tool - TOOL_FIRST_BEACON] = point;
+        editor->status = "Unsaved changes";
     }
     return true;
 }
@@ -177,7 +229,7 @@ void DrawWorldEditor(const WorldEditor *editor, InputPointer pointer)
     Rectangle map = MapBounds();
     const WorldSpec *world = &editor->draft;
     DrawText(TextFormat("Edit %s", world->name), 18, 14, 20, RAYWHITE);
-    DrawText("Choose a tool, then click or tap the map.", 18, 39, 13, LIGHTGRAY);
+    DrawText("Drag or swipe to sculpt. Tap to place markers.", 18, 39, 13, LIGHTGRAY);
     if (editor->map.id)
         DrawTexturePro(editor->map, (Rectangle){ 0, 0, (float)editor->map.width, (float)editor->map.height },
                        map, Vector2Zero(), 0, WHITE);

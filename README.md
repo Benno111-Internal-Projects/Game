@@ -38,12 +38,13 @@ The landscape builds nearby chunks as they enter the camera view and frees
 chunks left behind. Collision samples the same terrain grid, including
 terrain beyond the current view. Terrain blends ground, sediment, and rock
 textures by elevation and slope. The textures use world coordinates so they
-line up across chunks. The Sandbox terrain editor previews the same layers.
+line up across chunks. The Sandbox terrain editor previews the same layers. Willow Basin has trees
+that stream with its terrain chunks.
 
 ### Edit and ship world updates
 
 Choose **Edit** beside a world in the campaign picker. Raise or lower terrain
-with the brush, or place the spawn, three beacons, and gate on the map.
+by dragging or swiping the brush, or place the spawn, three beacons, and gate on the map.
 **Save update** writes a numbered `.world` file to the game's writable data
 directory and applies it locally. Return to the picker to play the edited
 world. Saved edits load again on startup and take priority over bundled files.
