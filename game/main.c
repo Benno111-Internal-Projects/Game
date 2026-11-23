@@ -467,7 +467,7 @@ static bool UpdateStarter(void *state, float deltaTime)
                     game->worldPickerOpen = false;
                     if (!HasPlayerTouchControls()) DisableCursor();
                 }
-                else TraceLog(LOG_ERROR, "Could not allocate campaign terrain cache");
+                else TraceLog(LOG_ERROR, "Could not load campaign terrain and models");
             }
         }
         UpdateStarterAudio(game);

@@ -8,9 +8,11 @@
 #include "terrain.h"
 
 typedef struct WorldChunk WorldChunk;
+typedef struct WorldModels WorldModels;
 
 typedef struct WorldCampaign {
     WorldChunk *chunks;
+    WorldModels *models;
     int world, waypoint;
     PlayerController player;
     PlayerTouch touch;
