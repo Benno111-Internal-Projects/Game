@@ -51,7 +51,7 @@ typedef struct Campaign {
     float time, attackTimer, guardTimer, hitTimer, phaseNotice, bossMotion;
     unsigned int attackCount;
     Vector3 bossPosition;
-    bool checkpoint, debugRun, cleared, paused, secondMaze;
+    bool checkpoint, debugRun, cleared, paused, secondMaze, editorPlaytest;
     bool mazeVisited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
 } Campaign;
 
@@ -69,7 +69,7 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
 CampaignPauseAction ReadCampaignPause(InputPointer pointer);
 void DrawCampaignHud(const Campaign *campaign, InputPointer pointer);
 bool ReadCampaignMenu(InputPointer pointer);
-int ReadDebugLevelSelect(InputPointer pointer);
-void DrawDebugLevelSelect(Vector2 pointer);
+int ReadMazeLevelSelect(InputPointer pointer, bool editing);
+void DrawMazeLevelSelect(Vector2 pointer, bool editing);
 
 #endif

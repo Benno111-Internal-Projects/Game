@@ -527,8 +527,12 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
             if (campaign->endlessLevel)
                 BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1, campaign->debugOptions, false);
             else if (IsMinibossMaze(campaign))
+            {
+                bool editorPlaytest = campaign->editorPlaytest;
                 BeginStage(campaign, campaign->level, campaign->debugRun, campaign->lives, NULL, 0,
                            campaign->debugOptions, true);
+                campaign->editorPlaytest = editorPlaytest;
+            }
             else if (campaign->debugRun || campaign->level == CAMPAIGN_LEVEL_COUNT - 1)
                 campaign->cleared = true;
             else
@@ -916,7 +920,7 @@ static void DrawCampaignPause(const Campaign *campaign, InputPointer pointer)
         Rectangle button = PauseButton(i);
         const char *retry = campaign->checkpoint ? "Retry checkpoint" : "Retry maze";
         if (!campaign->debugRun) retry = "Retry (costs a life)";
-        const char *labels[] = { "Resume", retry, campaign->debugRun ? "Level select" : "Mazes menu" };
+        const char *labels[] = { "Resume", retry, campaign->editorPlaytest ? "Maze editor" : campaign->debugRun ? "Level select" : "Mazes menu" };
         const char *label = labels[i];
         DrawUiButton(button, label, ReadUiButton(button, pointer, true), true);
     }
@@ -1039,7 +1043,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
                : IsMinibossMaze(campaign) ? "Gate to the second maze open" : "Exit open";
     DrawUiLabel(objective, 96 + hudX, 48 + hudY, 15, width - 104 - 2 * hudX, RAYWHITE);
     bool touch = HasPlayerTouchControls();
-    const char *back = (campaign->cleared || campaign->gameOver) ? (campaign->debugRun ? "Levels" : "Mazes")
+    const char *back = (campaign->cleared || campaign->gameOver) ? (campaign->editorPlaytest ? "Editor" : campaign->debugRun ? "Levels" : "Mazes")
                                         : (touch ? "Pause" : "Esc Pause");
     DrawUiButton(MenuBounds(), back, ReadUiButton(MenuBounds(), pointer, true), true);
 
@@ -1048,7 +1052,8 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
         DrawRectangle(0, hudBottom, width, height - hudBottom, (Color){ 8, 15, 24, 225 });
         const char *message = campaign->gameOver ? "Game over" : (campaign->debugRun ? "Level clear" : "Mazes complete");
         DrawText(message, (width - MeasureText(message, 33)) / 2, height / 2 - 30, 33, level->trim);
-        const char *prompt = campaign->debugRun ? "Return to level select" : "All bosses defeated";
+        const char *prompt = campaign->editorPlaytest ? "Return to maze editor" :
+                             campaign->debugRun ? "Return to level select" : "All bosses defeated";
         if (campaign->gameOver)
             prompt = TextFormat("Mazes cleared %llu", campaign->endlessLevel ?
                                campaign->stage - 1 : (unsigned long long)campaign->level);
@@ -1085,10 +1090,11 @@ static Rectangle DebugButton(int slot)
                         (height - 4 * row) / 2 + 14 + (slot / 2) * row, buttonWidth, row - 7 };
 }
 
-int ReadDebugLevelSelect(InputPointer pointer)
+int ReadMazeLevelSelect(InputPointer pointer, bool editing)
 {
     for (int i = 0; i <= CAMPAIGN_LEVEL_COUNT; ++i)
     {
+        if (editing && i < CAMPAIGN_LEVEL_COUNT && !campaignLevels[i].mazeRows) continue;
         if (ReadUiButton(DebugButton(i), pointer, true).activated ||
             (i < CAMPAIGN_LEVEL_COUNT && IsKeyPressed(KEY_ONE + i)))
             return i;
@@ -1096,11 +1102,11 @@ int ReadDebugLevelSelect(InputPointer pointer)
     return -1;
 }
 
-void DrawDebugLevelSelect(Vector2 position)
+void DrawMazeLevelSelect(Vector2 position, bool editing)
 {
     int width = GetScreenWidth(), height = GetScreenHeight();
     DrawRectangleGradientV(0, 0, width, height, (Color){ 12, 26, 41, 255 }, (Color){ 42, 67, 67, 255 });
-    const char *title = "Debug Level Select";
+    const char *title = editing ? "Maze Editor" : "Debug Level Select";
     DrawText(title, (width - MeasureText(title, 25)) / 2, (int)DebugButton(0).y - 44, 25, RAYWHITE);
     InputPointer pointer = { .position = position };
     for (int i = 0; i <= CAMPAIGN_LEVEL_COUNT; ++i)
@@ -1108,6 +1114,7 @@ void DrawDebugLevelSelect(Vector2 position)
         Rectangle button = DebugButton(i);
         bool back = i == CAMPAIGN_LEVEL_COUNT;
         const char *label = back ? "Back" : TextFormat("%d   %s", i + 1, campaignLevels[i].name);
-        DrawUiButton(button, label, ReadUiButton(button, pointer, true), true);
+        bool enabled = back || !editing || campaignLevels[i].mazeRows > 0;
+        DrawUiButton(button, label, ReadUiButton(button, pointer, enabled), enabled);
     }
 }

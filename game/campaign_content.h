@@ -4,6 +4,7 @@
 #include "campaign.h"
 
 enum {
+    AUTHORED_MAZE_SIDE = 31,
     CAMPAIGN_MAX_PLATFORMS = 9,
     CAMPAIGN_MAX_COLLIDERS = CAMPAIGN_MAX_PLATFORMS + 8
 };
@@ -47,6 +48,9 @@ extern const BossSpec campaignMinibosses[CAMPAIGN_LEVEL_COUNT];
 
 // Read and validate the complete numbered pack before replacing the active levels.
 bool LoadCampaignLevels(const char *directory);
+void LoadCampaignMazeOverrides(void);
+typedef enum MazeSaveResult { MAZE_SAVED, MAZE_INVALID, MAZE_SAVE_ERROR } MazeSaveResult;
+MazeSaveResult SaveCampaignMazeEdit(int index, const char *first, const char *second);
 void GenerateMazeLevel(LevelSpec *level, unsigned long long stage);
 Vector2 CampaignMazeCellCenter(const LevelSpec *level, int row, int col);
 

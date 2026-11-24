@@ -21,6 +21,7 @@
 #include "window.h"
 #include "world_campaign.h"
 #include "world_editor.h"
+#include "maze_editor.h"
 #include "scene.h"
 #include "scene_editor.h"
 #include "scene_music.h"
@@ -133,10 +134,12 @@ typedef struct StarterGame {
     ScenePrefab modelPrefab, ballPrefab, spherePrefab;
     PrefabInstance ballInstance, titleModel;
     bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen, worldPickerOpen, worldEditorOpen;
+    bool mazePickerOpen, mazeEditorOpen;
     Campaign campaign;
     DebugTools debugTools;
     WorldCampaign worlds;
     WorldEditor worldEditor;
+    MazeEditor mazeEditor;
     LevelSpec endlessLevel;
     CampaignSurfaces campaignSurfaces;
     TerrainLayers terrainLayers;
@@ -173,6 +176,7 @@ static bool InitStarter(void *state)
         !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir) ||
         !LoadTerrainLayers(&game->terrainLayers, assetsDir, shadersDir)) return false;
     LoadWorldOverrides();
+    LoadCampaignMazeOverrides();
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);
     game->model = LoadModel(assetPath);
     if (!IsModelValid(game->model) || game->model.meshes[0].vertexCount == 0) return false;
@@ -366,8 +370,9 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
         ((campaign->cleared || campaign->gameOver) && (escape || (!deathScreen && menu) || advance)))
     {
         game->campaignOpen = false;
-        game->debugOpen = campaign->debugRun;
-        game->mazesOpen = !game->debugOpen;
+        game->mazeEditorOpen = campaign->editorPlaytest;
+        game->debugOpen = !game->mazeEditorOpen && campaign->debugRun;
+        game->mazesOpen = !game->mazeEditorOpen && !game->debugOpen;
         if (!touch) EnableCursor();
         return;
     }
@@ -551,6 +556,43 @@ static bool UpdateStarter(void *state, float deltaTime)
         UpdateStarterAudio(game);
         return true;
     }
+    if (game->mazePickerOpen)
+    {
+        game->titlePointer = pointer.position;
+        int level = ReadMazeLevelSelect(pointer, true);
+        if (actions[ACTION_EXIT].pressed || level == CAMPAIGN_LEVEL_COUNT)
+        {
+            game->mazePickerOpen = false;
+            game->mazesOpen = true;
+        }
+        else if (level >= 0)
+        {
+            OpenMazeEditor(&game->mazeEditor, level);
+            game->mazePickerOpen = false;
+            game->mazeEditorOpen = true;
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
+    if (game->mazeEditorOpen)
+    {
+        game->titlePointer = pointer.position;
+        MazeEditorAction action = actions[ACTION_EXIT].pressed ? MAZE_EDIT_BACK :
+                                  UpdateMazeEditor(&game->mazeEditor, pointer);
+        if (action == MAZE_EDIT_BACK)
+        {
+            game->mazeEditorOpen = false;
+            game->mazePickerOpen = true;
+        }
+        else if (action == MAZE_EDIT_PLAY)
+        {
+            game->mazeEditorOpen = false;
+            OpenCampaign(game, game->mazeEditor.level, true, false);
+            game->campaign.editorPlaytest = true;
+        }
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->mazesOpen)
     {
         game->titlePointer = pointer.position;
@@ -560,6 +602,11 @@ static bool UpdateStarter(void *state, float deltaTime)
             game->mazesOpen = false;
             game->titleOpen = true;
         }
+        else if (choice == MAZES_EDIT)
+        {
+            game->mazesOpen = false;
+            game->mazePickerOpen = true;
+        }
         else if (choice == MAZES_CLASSIC || choice == MAZES_INFINITE || actions[ACTION_START].pressed)
             OpenCampaign(game, 0, false, choice == MAZES_INFINITE);
         UpdateStarterAudio(game);
@@ -568,7 +615,7 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (game->debugOpen)
     {
         game->titlePointer = pointer.position;
-        int level = ReadDebugLevelSelect(pointer);
+        int level = ReadMazeLevelSelect(pointer, false);
         if (actions[ACTION_EXIT].pressed || level == CAMPAIGN_LEVEL_COUNT)
         {
             game->debugOpen = false;
@@ -867,6 +914,16 @@ static void DrawStarter(const void *state)
             game->campaign.death == CAMPAIGN_DEATH_NONE) DrawGameDebug(game);
         return;
     }
+    if (game->mazePickerOpen)
+    {
+        DrawMazeLevelSelect(game->titlePointer, true);
+        return;
+    }
+    if (game->mazeEditorOpen)
+    {
+        DrawMazeEditor(&game->mazeEditor, (InputPointer){ .position = game->titlePointer });
+        return;
+    }
     if (game->mazesOpen)
     {
         DrawMazesMenu(game->titlePointer);
@@ -874,7 +931,7 @@ static void DrawStarter(const void *state)
     }
     if (game->debugOpen)
     {
-        DrawDebugLevelSelect(game->titlePointer);
+        DrawMazeLevelSelect(game->titlePointer, false);
         return;
     }
     if (game->titleOpen)

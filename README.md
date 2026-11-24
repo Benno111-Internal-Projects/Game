@@ -110,6 +110,20 @@ press **1–7** on a keyboard. Debug runs return to the picker after the stage
 ends. Level layouts are in `game/assets/levels/`. Boss behavior is in `game/campaign_content.c`.
 Choose **Sandbox** to play the editable scene.
 
+### Edit a maze
+
+Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to
+paint walls and passages, or use the spawn and exit tools. **Edit second
+maze** switches layouts in levels 5 and 7. **Save update** checks that every
+passage connects to the spawn and exit, then applies the edit locally.
+**Play saved** opens the saved level with unlimited retries and returns to
+the editor when you leave.
+
+The save path appears in the game log. To share a local edit through the
+level pack, copy `maze-05.level` (or the matching number) to
+`game/assets/levels/05.level`. Local saves take priority over the bundled
+level on startup.
+
 ### Ship a level update
 
 Edit `game/assets/levels/01.level` through `07.level` in GitHub and open a pull

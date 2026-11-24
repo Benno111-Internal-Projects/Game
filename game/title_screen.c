@@ -91,36 +91,36 @@ static Rectangle MazesPanel(void)
 {
     Vector2 inset = GameUiInset();
     float width = fminf(310, GetScreenWidth() - 2 * inset.x - 24);
-    float scale = fminf(1, (GetScreenHeight() - 2 * inset.y - 12) / 234);
-    float height = 234 * scale;
-    float y = fminf(GetScreenHeight() * 0.5f - 108 * scale, GetScreenHeight() - inset.y - height);
+    float scale = fminf(1, (GetScreenHeight() - 2 * inset.y - 12) / 284);
+    float height = 284 * scale;
+    float y = fminf(GetScreenHeight() * 0.5f - 133 * scale, GetScreenHeight() - inset.y - height);
     return (Rectangle){ (GetScreenWidth() - width) * 0.5f, y, width, height };
 }
 
 static Rectangle MazesButton(int index)
 {
     Rectangle panel = MazesPanel();
-    float scale = panel.height / 234;
+    float scale = panel.height / 284;
     return (Rectangle){ panel.x + 20, panel.y + (74 + index * 50) * scale,
                         panel.width - 40, 40 * scale };
 }
 
 MazesAction ReadMazesMenu(InputPointer pointer)
 {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         if (ReadUiButton(MazesButton(i), pointer, true).activated) return MAZES_CLASSIC + i;
     return MAZES_NONE;
 }
 
 void DrawMazesMenu(Vector2 pointer)
 {
-    const char *labels[] = { "Classic (seven mazes)", "Infinite (random mazes)", "Back" };
+    const char *labels[] = { "Classic (seven mazes)", "Infinite (random mazes)", "Edit mazes", "Back" };
     Rectangle panel = MazesPanel();
     DrawUiPanel(panel, (Color){ 15, 24, 35, 255 });
     int size = (int)fminf(30, panel.height / 7.8f);
     DrawText("Mazes", (GetScreenWidth() - MeasureText("Mazes", size)) / 2,
-             (int)(panel.y + 18 * panel.height / 234), size, RAYWHITE);
-    for (int i = 0; i < 3; ++i)
+             (int)(panel.y + 18 * panel.height / 284), size, RAYWHITE);
+    for (int i = 0; i < 4; ++i)
     {
         Rectangle button = MazesButton(i);
         DrawUiButton(button, labels[i], ReadUiButton(button, (InputPointer){ .position = pointer }, true), true);

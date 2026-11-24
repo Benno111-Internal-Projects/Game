@@ -1,6 +1,6 @@
 set(game_sources
     main.c title_screen.c scene_editor.c player_touch.c campaign.c campaign_content.c campaign_levels.c
-    user_content.c debug_tools.c world_campaign.c world_levels.c world_editor.c
+    user_content.c debug_tools.c maze_editor.c world_campaign.c world_levels.c world_editor.c
 )
 
 if(ANDROID)

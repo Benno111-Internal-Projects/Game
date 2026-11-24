@@ -1,4 +1,5 @@
 #include "campaign_content.h"
+#include "user_content.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,7 +11,6 @@
 LevelSpec campaignLevels[CAMPAIGN_LEVEL_COUNT];
 LevelSpec campaignExtraMazes[CAMPAIGN_LEVEL_COUNT];
 
-enum { AUTHORED_MAZE_SIDE = 31 };
 
 static char *NextLine(char **cursor)
 {
@@ -343,4 +343,104 @@ bool LoadCampaignLevels(const char *directory)
     }
     free(levels);
     return valid;
+}
+
+static bool MazeOverridePath(int index, char *path, size_t capacity, bool create)
+{
+    char filename[32];
+    snprintf(filename, sizeof(filename), "maze-%02d.level", index + 1);
+    return UserContentPath(path, capacity, filename, create);
+}
+
+static bool ReadMazeOverride(char *text, int index, LevelSpec *draft)
+{
+    LevelSpec *extra = campaignMinibosses[index].name ? &draft[1] : NULL;
+    return ReadLevel(text, &draft[0], extra) && draft[0].mazeRows > 0 &&
+           draft[0].firstBoss == campaignLevels[index].firstBoss &&
+           draft[0].bossCount == campaignLevels[index].bossCount;
+}
+
+void LoadCampaignMazeOverrides(void)
+{
+    LevelSpec *draft = calloc(2, sizeof(*draft));
+    if (!draft) return;
+    for (int i = 0; i < CAMPAIGN_LEVEL_COUNT; ++i)
+    {
+        char path[1024];
+        if (!MazeOverridePath(i, path, sizeof(path), false)) continue;
+#if !defined(PLATFORM_ANDROID)
+        if (!FileExists(path)) continue;
+#endif
+        char *text = LoadFileText(path);
+        if (!text) continue;
+        memset(draft, 0, 2 * sizeof(*draft));
+        if (ReadMazeOverride(text, i, draft))
+        {
+            campaignLevels[i] = draft[0];
+            campaignExtraMazes[i] = draft[1];
+        }
+        else TraceLog(LOG_WARNING, "Ignored invalid maze override %s", path);
+        UnloadFileText(text);
+    }
+    free(draft);
+}
+
+static bool WriteMazeBlock(char **cursor, size_t *remaining, const LevelSpec *level, const char *tiles)
+{
+    int length = snprintf(*cursor, *remaining, "maze %d %d\n", level->mazeRows, level->mazeCols);
+    if (length < 0 || (size_t)length >= *remaining) return false;
+    *cursor += length;
+    *remaining -= (size_t)length;
+    for (int row = 0; row < level->mazeRows; ++row)
+    {
+        size_t cols = (size_t)level->mazeCols;
+        if (cols + 1 >= *remaining) return false;
+        memcpy(*cursor, tiles + row * cols, cols);
+        (*cursor)[cols] = '\n';
+        *cursor += cols + 1;
+        *remaining -= cols + 1;
+    }
+    **cursor = '\0';
+    return true;
+}
+
+MazeSaveResult SaveCampaignMazeEdit(int index, const char *first, const char *second)
+{
+    if (index < 0 || index >= CAMPAIGN_LEVEL_COUNT || !first) return MAZE_INVALID;
+    const LevelSpec *level = &campaignLevels[index];
+    const LevelSpec *extra = &campaignExtraMazes[index];
+    bool hasExtra = extra->mazeRows > 0;
+    if (!level->mazeRows || (hasExtra && !second)) return MAZE_INVALID;
+    char text[256 + 2 * AUTHORED_MAZE_SIDE * (AUTHORED_MAZE_SIDE + 1)];
+    int length = snprintf(text, sizeof(text),
+                          "DORF-LEVEL %d\nname %s\nstone %u %u %u\ntrim %u %u %u\nbosses %d %d\n",
+                          hasExtra ? 3 : 2, level->name,
+                          (unsigned)level->stone.r, (unsigned)level->stone.g, (unsigned)level->stone.b,
+                          (unsigned)level->trim.r, (unsigned)level->trim.g, (unsigned)level->trim.b,
+                          level->firstBoss + 1, level->bossCount);
+    if (length < 0 || (size_t)length >= sizeof(text)) return MAZE_SAVE_ERROR;
+    char *cursor = text + length;
+    size_t remaining = sizeof(text) - (size_t)length;
+    if (!WriteMazeBlock(&cursor, &remaining, level, first) ||
+        (hasExtra && !WriteMazeBlock(&cursor, &remaining, extra, second))) return MAZE_SAVE_ERROR;
+
+    char copy[sizeof(text)];
+    memcpy(copy, text, (size_t)(cursor - text) + 1);
+    LevelSpec *draft = calloc(2, sizeof(*draft));
+    if (!draft) return MAZE_SAVE_ERROR;
+    MazeSaveResult result = MAZE_INVALID;
+    if (ReadMazeOverride(copy, index, draft))
+    {
+        char path[1024];
+        result = MAZE_SAVE_ERROR;
+        if (MazeOverridePath(index, path, sizeof(path), true) && SaveFileText(path, text))
+        {
+            campaignLevels[index] = draft[0];
+            campaignExtraMazes[index] = draft[1];
+            TraceLog(LOG_INFO, "Maze update saved to %s", path);
+            result = MAZE_SAVED;
+        }
+    }
+    free(draft);
+    return result;
 }
