@@ -994,7 +994,7 @@ static void DrawStarter(const void *state)
         headingRight = (float)x;
     }
     const char *heading = touch ? (game->walking ? "Player" : "Orbit")
-        : (game->walking ? GAME_NAME " / Walk" : GAME_NAME " / Orbit");
+        : (game->walking ? GAME_CODENAME " / Walk" : GAME_CODENAME " / Orbit");
     DrawUiLabel(heading, left, 10 + top, 23, headingRight - left - 8, RAYWHITE);
     const char *controls = game->walking
         ? "WASD move / Space jump / Shift sprint / Mouse look / R reset / F or Esc orbit"

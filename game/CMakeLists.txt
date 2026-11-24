@@ -16,7 +16,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set_target_properties(benno111-engene PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER "${bundle_identifier}"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${bundle_identifier}"
-        MACOSX_BUNDLE_BUNDLE_NAME "benno111 engene"
+        MACOSX_BUNDLE_BUNDLE_NAME "project 3D"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
         MACOSX_BUNDLE_BUNDLE_VERSION "1"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/iOS-Info.plist")

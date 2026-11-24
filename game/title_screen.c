@@ -59,15 +59,10 @@ void DrawTitleScreen(Vector2 pointer, bool muted, bool audioAvailable)
 
     int titleSize = (int)(44.0f * layout.scale);
     int titleWidth = layout.narrow ? GetScreenWidth() - 36 : (int)(GetScreenWidth() * 0.48f);
-    while (titleSize > 12 && MeasureText(GAME_NAME, titleSize) > titleWidth) --titleSize;
-    int titleX = layout.narrow ? (GetScreenWidth() - MeasureText(GAME_NAME, titleSize)) / 2
+    while (titleSize > 12 && MeasureText(GAME_CODENAME, titleSize) > titleWidth) --titleSize;
+    int titleX = layout.narrow ? (GetScreenWidth() - MeasureText(GAME_CODENAME, titleSize)) / 2
                                : (int)layout.x;
-    DrawText(GAME_NAME, titleX, (int)layout.y, titleSize, RAYWHITE);
-
-    int codenameSize = (int)(16.0f * layout.scale);
-    int codenameX = layout.narrow ? (GetScreenWidth() - MeasureText(GAME_CODENAME, codenameSize)) / 2
-                                  : (int)layout.x;
-    DrawText(GAME_CODENAME, codenameX, (int)(layout.y + 47.0f * layout.scale), codenameSize, accent);
+    DrawText(GAME_CODENAME, titleX, (int)layout.y, titleSize, RAYWHITE);
 
     const char *audioLabel = !audioAvailable ? "Audio unavailable"
                                              : (muted ? "Audio off [M]" : "Audio on [M]");
