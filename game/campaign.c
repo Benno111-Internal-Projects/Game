@@ -637,8 +637,16 @@ static Texture2D LoadStoneTexture(int tileWidth, int tileHeight, bool stagger)
     return texture;
 }
 
-bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir)
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, const char *shaderDir)
 {
+    surfaces->torch = LoadModel(TextFormat("%smaze-torch.obj", assetDir));
+    surfaces->torchFlame = LoadModel(TextFormat("%smaze-torch-flame.obj", assetDir));
+    if (!IsModelValid(surfaces->torch) || !IsModelValid(surfaces->torchFlame) ||
+        surfaces->torch.materialCount < 2 || surfaces->torchFlame.materialCount < 2)
+    {
+        TraceLog(LOG_ERROR, "Could not load maze torch meshes and materials");
+        return false;
+    }
     surfaces->walls = LoadStoneTexture(32, 16, true);
     surfaces->platforms = LoadStoneTexture(32, 32, false);
     surfaces->ceiling = LoadStoneTexture(16, 32, true);
@@ -656,6 +664,8 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir)
 
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
 {
+    if (surfaces.torch.meshes) UnloadModel(surfaces.torch);
+    if (surfaces.torchFlame.meshes) UnloadModel(surfaces.torchFlame);
     if (surfaces.walls.id) UnloadTexture(surfaces.walls);
     if (surfaces.platforms.id) UnloadTexture(surfaces.platforms);
     if (surfaces.ceiling.id) UnloadTexture(surfaces.ceiling);
@@ -831,7 +841,7 @@ void PrepareCampaignLighting(const Campaign *campaign, CampaignSurfaces *surface
     }
 }
 
-static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
+static void DrawWallTorches(const LevelSpec *level, const CampaignSurfaces *surfaces, Vector3 eye, float time)
 {
     MazeRegion region = NearbyMaze(level, eye, 10);
     for (int row = region.firstRow; row < region.lastRow; ++row)
@@ -839,15 +849,14 @@ static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
         {
             Vector3 flame, mount;
             if (!WallTorch(level, row, col, &flame, &mount)) continue;
-            Vector3 base = { flame.x, flame.y - 0.13f, flame.z };
-            DrawCylinderEx(mount, base, 0.065f, 0.095f, 6, (Color){ 88, 54, 31, 255 });
-            DrawCylinder(base, 0.13f, 0.09f, 0.10f, 7, (Color){ 65, 55, 51, 255 });
+            Vector3 up = { 0, 1, 0 };
+            float yaw = atan2f(flame.x - mount.x, flame.z - mount.z) * RAD2DEG;
+            DrawModelEx(surfaces->torch, flame, up, yaw, (Vector3){ 1, 1, 1 }, WHITE);
+
             float flicker = TorchFlicker(flame, time);
-            Vector3 tip = { flame.x + 0.05f * sinf(time * 15.0f + flame.z),
-                            flame.y + 0.36f * flicker, flame.z };
-            Vector3 wick = Vector3Add(base, (Vector3){ 0, 0.101f, 0 });
-            DrawCylinderEx(wick, tip, 0.12f, 0.015f, 7, ORANGE);
-            DrawSphereEx(flame, 0.09f * flicker, 5, 7, YELLOW);
+            Vector3 glow = flame;
+            glow.x += 0.025f * sinf(time * 15.0f + flame.z);
+            DrawModelEx(surfaces->torchFlame, glow, up, yaw, (Vector3){ 1, flicker, 1 }, WHITE);
         }
 }
 
@@ -956,7 +965,7 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
     DrawMazeWalls(level, surfaces, lightmap, wall, !elevator);
     EndShaderMode();
-    DrawWallTorches(level, eye, time);
+    DrawWallTorches(level, surfaces, eye, time);
 }
 
 static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)

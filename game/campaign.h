@@ -35,6 +35,7 @@ enum { MAZE_FLOORS = 3 };
 
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;
+    Model torch, torchFlame;
     Shader mazeLighting;
     Texture2D mazeLightmap;
     const LevelSpec *litLevel;
@@ -87,7 +88,7 @@ void StartEndlessMazes(Campaign *campaign, LevelSpec *level);
 void TeleportCampaignRandomly(Campaign *campaign);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);
-bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir);
+bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, const char *shaderDir);
 void ContinueCampaign(Campaign *campaign);
 bool ReadCampaignContinue(InputPointer pointer);
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces);

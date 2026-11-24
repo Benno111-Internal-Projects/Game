@@ -173,7 +173,7 @@ static bool InitStarter(void *state)
 #endif
     if (!LoadWorldLevels(TextFormat("%sworlds", assetsDir)) ||
         !LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
-        !LoadCampaignSurfaces(&game->campaignSurfaces, shadersDir) ||
+        !LoadCampaignSurfaces(&game->campaignSurfaces, assetsDir, shadersDir) ||
         !LoadTerrainLayers(&game->terrainLayers, assetsDir, shadersDir)) return false;
     LoadWorldOverrides();
     LoadCampaignMazeOverrides();
