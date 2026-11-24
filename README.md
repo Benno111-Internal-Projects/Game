@@ -76,15 +76,16 @@ through the nine bosses. Each generated maze has an independently random
 width and height from 17 to 200 cells. The minimap follows the player in
 large mazes.
 
-Wall torches light the dark corridors and burn on contact. Find the hidden
-passage to the enclosed boss room. Land on a boss from above
+Wall torches light the dark corridors and burn on contact. Each maze has three
+floors. Walk into the marked elevator on floors 1 and 2 to ride up. On
+floor 3, find the hidden passage to the enclosed boss room. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
 Several bosses change movement and attacks as they take damage. The Hollow Crown
 has three phases.
 
 Each run starts with three lives and three health points per life. Dying or
-retrying spends one life. Reaching a boss room sets a checkpoint for that
-maze. The death screen shows what killed you and how many lives remain.
+retrying spends one life and restarts the current floor. Reaching a boss room
+sets a checkpoint for that maze. The death screen shows what killed you and how many lives remain.
 Press **Enter** or select the respawn button to continue. Lives carry forward
 between mazes, and the run ends when they run out.
 Debug level select gives unlimited retries.
@@ -114,7 +115,9 @@ Choose **Sandbox** to play the editable scene.
 
 Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to
 paint walls and passages, or use the spawn and exit tools. **Edit second
-maze** switches layouts in levels 5 and 7. **Save update** checks that every
+maze** switches layouts in levels 5 and 7. The editor sets the first-floor
+layouts. The game generates the two upper floors for each maze. **Save update**
+checks that every
 passage connects to the spawn and exit, then applies the edit locally.
 **Play saved** opens the saved level with unlimited retries and returns to
 the editor when you leave.

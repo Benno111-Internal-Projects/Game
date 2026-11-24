@@ -9,14 +9,37 @@
 
 enum { CAMPAIGN_LEVEL_COUNT = 7, CAMPAIGN_BOSS_COUNT = 9, CAMPAIGN_MAX_ORBS = 48, CAMPAIGN_MAZE_SIDE = 200 };
 
-struct LevelSpec;
+enum {
+    AUTHORED_MAZE_SIDE = 31,
+    CAMPAIGN_MAX_PLATFORMS = 9,
+    CAMPAIGN_MAX_COLLIDERS = CAMPAIGN_MAX_PLATFORMS + 8
+};
+
+#define CAMPAIGN_MAZE_CELL 2.5f
+#define CAMPAIGN_MAZE_HEIGHT 3.6f
+
+typedef struct LevelSpec {
+    char name[64];
+    Color stone, trim;
+    Vector2 start;
+    BoundingBox platforms[CAMPAIGN_MAX_PLATFORMS];
+    int platformCount;
+    int firstBoss, bossCount;
+    int mazeRows, mazeCols, mazeExit;
+    char maze[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
+    BoundingBox colliders[CAMPAIGN_MAX_COLLIDERS];
+    int colliderCount, wallEnd;
+} LevelSpec;
+
+enum { MAZE_FLOORS = 3 };
 
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;
     Shader mazeLighting;
     Texture2D mazeLightmap;
-    const struct LevelSpec *litLevel;
+    const LevelSpec *litLevel;
     unsigned long long litStage;
+    int litFloor;
     int lightmapLocation, mazeSizeLocation, flickerLocation;
 } CampaignSurfaces;
 
@@ -36,7 +59,11 @@ typedef struct CampaignOrb {
 enum { MAZE_RUN_LIVES = 3 };
 
 typedef struct Campaign {
-    struct LevelSpec *endlessLevel;
+    LevelSpec *endlessLevel;
+    LevelSpec upperMaze;
+    int mazeFloor;
+    unsigned int mazeSeed;
+    float elevatorTime;
     unsigned long long stage;
     int lives;
     bool gameOver;
@@ -56,7 +83,7 @@ typedef struct Campaign {
 } Campaign;
 
 void StartCampaign(Campaign *campaign, int level, bool debugRun);
-void StartEndlessMazes(Campaign *campaign, struct LevelSpec *level);
+void StartEndlessMazes(Campaign *campaign, LevelSpec *level);
 void TeleportCampaignRandomly(Campaign *campaign);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);

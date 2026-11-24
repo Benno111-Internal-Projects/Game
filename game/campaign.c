@@ -19,10 +19,20 @@ static bool IsMinibossMaze(const Campaign *campaign)
     return HasExtraMaze(campaign) && !campaign->secondMaze;
 }
 
-static const LevelSpec *CurrentLevel(const Campaign *campaign)
+static const LevelSpec *BaseMaze(const Campaign *campaign)
 {
     if (campaign->endlessLevel) return campaign->endlessLevel;
     return campaign->secondMaze ? &campaignExtraMazes[campaign->level] : &campaignLevels[campaign->level];
+}
+
+static const LevelSpec *CurrentLevel(const Campaign *campaign)
+{
+    return campaign->mazeFloor > 0 ? &campaign->upperMaze : BaseMaze(campaign);
+}
+
+static bool HasElevator(const Campaign *campaign)
+{
+    return CurrentLevel(campaign)->mazeRows > 0 && campaign->mazeFloor + 1 < MAZE_FLOORS;
 }
 
 static BoundingBox Arena(const Campaign *campaign)
@@ -35,7 +45,7 @@ static const BossSpec *CurrentBoss(const Campaign *campaign)
 {
     if (IsMinibossMaze(campaign))
         return campaign->bossIndex == 0 ? &campaignMinibosses[campaign->level] : NULL;
-    const LevelSpec *level = CurrentLevel(campaign);
+    const LevelSpec *level = BaseMaze(campaign);
     return campaign->bossIndex < level->bossCount
         ? &campaignBosses[level->firstBoss + campaign->bossIndex] : NULL;
 }
@@ -196,6 +206,7 @@ static PlayerWorld CampaignWorld(const LevelSpec *level, Vector3 position, Bound
 
 static void Respawn(Campaign *campaign)
 {
+    campaign->elevatorTime = 0;
     const LevelSpec *level = CurrentLevel(campaign);
     BoundingBox arena = Arena(campaign);
     Vector2 spawn = campaign->checkpoint
@@ -215,7 +226,7 @@ static void Respawn(Campaign *campaign)
     UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
 }
 
-static void PlaceDebugPlayer(Campaign *campaign, Vector2 destination, float height)
+static void PlaceCampaignPlayer(Campaign *campaign, Vector2 destination, float height)
 {
     BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
     PlayerWorld world = CampaignWorld(CurrentLevel(campaign), (Vector3){ destination.x, height, destination.y },
@@ -230,6 +241,7 @@ static void PlaceDebugPlayer(Campaign *campaign, Vector2 destination, float heig
 
 void TeleportCampaignRandomly(Campaign *campaign)
 {
+    if (campaign->elevatorTime > 0) return;
     const LevelSpec *level = CurrentLevel(campaign);
     Vector2 destination = level->start;
     float height = level->platforms[0].max.y;
@@ -252,7 +264,7 @@ void TeleportCampaignRandomly(Campaign *campaign)
                                  (platform.min.z + platform.max.z) * 0.5f };
         height = platform.max.y;
     }
-    PlaceDebugPlayer(campaign, destination, height);
+    PlaceCampaignPlayer(campaign, destination, height);
 }
 
 static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
@@ -263,7 +275,11 @@ static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
         .endlessLevel = endlessLevel, .stage = stage, .secondMaze = secondMaze,
         .camera = { .up = { 0, 1, 0 }, .fovy = 48, .projection = CAMERA_PERSPECTIVE },
     };
-    if (endlessLevel) GenerateMazeLevel(endlessLevel, stage);
+    if (endlessLevel)
+    {
+        GenerateMazeLevel(endlessLevel, stage);
+        campaign->mazeSeed = (unsigned int)GetRandomValue(0, 0x7fffff);
+    }
     Respawn(campaign);
 }
 
@@ -473,16 +489,54 @@ static bool TouchTorches(Campaign *campaign, const LevelSpec *level)
     return false;
 }
 
+#define ELEVATOR_RIDE_SECONDS 1.6f
+#define ELEVATOR_RISE 5.0f
+
+static Vector2 ElevatorCenter(const LevelSpec *level)
+{
+    return CampaignMazeCellCenter(level, 0, level->mazeExit);
+}
+
+static void RideMazeElevator(Campaign *campaign, float dt)
+{
+    campaign->elevatorTime = fmaxf(0, campaign->elevatorTime - dt);
+    if (campaign->elevatorTime > 0)
+    {
+        float progress = 1.0f - campaign->elevatorTime / ELEVATOR_RIDE_SECONDS;
+        float height = ELEVATOR_RISE * progress * progress * (3 - 2 * progress);
+        float rise = height + GetPlayerEye(&campaign->player).y - campaign->camera.position.y;
+        campaign->camera.position.y += rise;
+        campaign->camera.target.y += rise;
+        return;
+    }
+
+    ++campaign->mazeFloor;
+    const LevelSpec *base = BaseMaze(campaign);
+    unsigned int seed = campaign->mazeSeed + (unsigned int)campaign->stage * 2654435761u +
+        (unsigned int)(campaign->level * 2 + campaign->secondMaze) * 2246822519u +
+        (unsigned int)campaign->mazeFloor * 3266489917u;
+    GenerateUpperMaze(&campaign->upperMaze, base, seed);
+    UpdateBossPosition(campaign);
+    memset(campaign->mazeVisited, 0, sizeof(campaign->mazeVisited));
+    campaign->hitTimer = fmaxf(campaign->hitTimer, 0.65f);
+    PlaceCampaignPlayer(campaign, campaign->upperMaze.start, 0);
+}
+
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt)
 {
     if (campaign->cleared || campaign->gameOver || campaign->paused || campaign->death != CAMPAIGN_DEATH_NONE) return;
+    dt = Clamp(dt, 0, 0.05f);
     if (retry)
     {
         LoseLife(campaign, CAMPAIGN_DEATH_NONE);
         return;
     }
-    dt = Clamp(dt, 0, 0.05f);
+    if (campaign->elevatorTime > 0)
+    {
+        RideMazeElevator(campaign, dt);
+        return;
+    }
     campaign->time += dt;
     campaign->hitTimer = fmaxf(0, campaign->hitTimer - dt);
 
@@ -506,20 +560,30 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
             const LevelSpec *level = CurrentLevel(campaign);
             BoundingBox arena = Arena(campaign);
             if (campaign->checkpoint)
-                PlaceDebugPlayer(campaign, (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f },
+                PlaceCampaignPlayer(campaign, (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f },
                                  arena.max.y);
-            else PlaceDebugPlayer(campaign, level->start, level->platforms[0].max.y);
+            else PlaceCampaignPlayer(campaign, level->start, level->platforms[0].max.y);
         }
         else LoseLife(campaign, CAMPAIGN_DEATH_FALL);
         return;
     }
 
+    const LevelSpec *level = CurrentLevel(campaign);
+    bool elevator = HasElevator(campaign);
+    if (elevator && MazeCellAt(level, campaign->player.feet) == level->mazeExit)
+    {
+        campaign->view.yaw = PI;
+        campaign->view.pitch = 0;
+        PlaceCampaignPlayer(campaign, ElevatorCenter(level), 0);
+        campaign->elevatorTime = ELEVATOR_RIDE_SECONDS;
+        return;
+    }
     BoundingBox arena = Arena(campaign);
     TrackMazePosition(campaign);
-    if (OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
-    if (TouchTorches(campaign, CurrentLevel(campaign)) || UpdateEncounter(campaign, oldFeet, dt)) return;
+    if (!elevator && OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
+    if (TouchTorches(campaign, level) || UpdateEncounter(campaign, oldFeet, dt)) return;
 
-    if (!CurrentBoss(campaign))
+    if (!elevator && !CurrentBoss(campaign))
     {
         Vector3 portal = GatePosition(arena);
         if (Vector3DistanceSqr(campaign->player.feet, portal) < 1.15f * 1.15f)
@@ -740,11 +804,12 @@ void PrepareCampaignLighting(const Campaign *campaign, CampaignSurfaces *surface
     const LevelSpec *level = CurrentLevel(campaign);
     unsigned long long stage = campaign->stage;
     if (!level->mazeRows) return;
-    if (surfaces->litLevel == level && surfaces->litStage == stage) return;
+    if (surfaces->litLevel == level && surfaces->litStage == stage && surfaces->litFloor == campaign->mazeFloor) return;
     if (surfaces->mazeLightmap.id) UnloadTexture(surfaces->mazeLightmap);
     surfaces->mazeLightmap = (Texture2D){ 0 };
     surfaces->litLevel = level;
     surfaces->litStage = stage;
+    surfaces->litFloor = campaign->mazeFloor;
 
     int width = level->mazeCols * LIGHT_SAMPLES, height = level->mazeRows * LIGHT_SAMPLES;
     Color *pixels = calloc((size_t)width * height, sizeof(*pixels));
@@ -808,16 +873,16 @@ static bool MazeChunkInView(BoundingBox box, Matrix clip)
     return true;
 }
 
-static bool IsMazeStone(const LevelSpec *level, int row, int col)
+static bool IsMazeStone(const LevelSpec *level, int row, int col, bool hideExit)
 {
     // The concealed exit renders as stone but stays traversable.
     if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return false;
     char tile = level->maze[row * level->mazeCols + col];
-    return tile == '#' || tile == 'E';
+    return tile == '#' || (hideExit && tile == 'E');
 }
 
 static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfaces,
-                          Texture2D lightmap, Color wall)
+                          Texture2D lightmap, Color wall, bool hideExit)
 {
     enum { CHUNK_SIDE = 16 };
     Matrix clip = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
@@ -836,9 +901,9 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
             for (int z = row; z < lastRow; ++z)
                 for (int x = col; x < lastCol; ++x)
                 {
-                    if (!IsMazeStone(level, z, x)) continue;
-                    bool north = !IsMazeStone(level, z - 1, x), south = !IsMazeStone(level, z + 1, x);
-                    bool west = !IsMazeStone(level, z, x - 1), east = !IsMazeStone(level, z, x + 1);
+                    if (!IsMazeStone(level, z, x, hideExit)) continue;
+                    bool north = !IsMazeStone(level, z - 1, x, hideExit), south = !IsMazeStone(level, z + 1, x, hideExit);
+                    bool west = !IsMazeStone(level, z, x - 1, hideExit), east = !IsMazeStone(level, z, x + 1, hideExit);
                     int vertices = 4 * (north + south + west + east);
                     if (!vertices) continue;
                     // A batch flush clears secondary samplers.
@@ -860,21 +925,24 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
 }
 
 static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces,
-                                 Vector3 eye, float time)
+                                 Vector3 eye, float time, bool elevator)
 {
     Color floor = ColorLerp(level->stone, level->trim, 0.19f);
     Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
     Color ceiling = ColorBrightness(floor, -0.15f);
-    int firstPlatform = level->mazeRows ? 1 : 0;
-    for (int i = firstPlatform; i < level->platformCount; ++i)
-        DrawTexturedStone(surfaces->platforms, level->platforms[i], floor);
+    if (!elevator)
+    {
+        int firstPlatform = level->mazeRows ? 1 : 0;
+        for (int i = firstPlatform; i < level->platformCount; ++i)
+            DrawTexturedStone(surfaces->platforms, level->platforms[i], floor);
 
-    rlSetTexture(surfaces->walls.id);
-    rlBegin(RL_QUADS);
-    for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
-    rlEnd();
-    rlSetTexture(0);
-    DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+        rlSetTexture(surfaces->walls.id);
+        rlBegin(RL_QUADS);
+        for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
+        rlEnd();
+        rlSetTexture(0);
+        DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+    }
     if (!level->mazeRows) return;
 
     Vector2 dims = { (float)level->mazeCols, (float)level->mazeRows };
@@ -886,7 +954,7 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
     DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
-    DrawMazeWalls(level, surfaces, lightmap, wall);
+    DrawMazeWalls(level, surfaces, lightmap, wall, !elevator);
     EndShaderMode();
     DrawWallTorches(level, eye, time);
 }
@@ -908,11 +976,50 @@ static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
     }
 }
 
+static void DrawMazeElevator(const Campaign *campaign, const LevelSpec *level)
+{
+    Vector2 center = ElevatorCenter(level);
+    bool riding = campaign->elevatorTime > 0;
+    float y = riding ? campaign->camera.position.y - GetPlayerEye(&campaign->player).y : 0;
+    const Color steel = { 64, 84, 96, 255 };
+    DrawCube((Vector3){ center.x, y - 0.095f, center.y }, 2.48f, 0.24f, 2.48f, steel);
+    DrawCube((Vector3){ center.x, y + 3.12f, center.y }, 2.48f, 0.24f, 2.48f, steel);
+    for (int side = -1; side <= 1; side += 2)
+    {
+        float x = center.x + side * 1.18f;
+        DrawCube((Vector3){ x, y + 1.5f, center.y }, 0.12f, 3.0f, 2.48f, steel);
+        DrawCube((Vector3){ x, y + 2.65f, center.y + 1.24f }, 0.13f, 0.7f, 0.08f, GOLD);
+    }
+
+    if (!riding)
+        DrawCube((Vector3){ center.x, 1.5f, center.y - 1.18f }, 2.48f, 3.0f, 0.12f, steel);
+    else
+    {
+        DrawCube((Vector3){ center.x, y + 1.5f, center.y + 1.18f }, 2.48f, 3.0f, 0.12f, steel);
+        // The fixed bands behind the moving cabin make the ascent visible.
+        DrawCube((Vector3){ center.x, 4.0f, center.y - 1.4f }, 2.48f, 9.0f, 0.14f, (Color){ 38, 47, 56, 255 });
+        for (int band = 1; band < 9; ++band)
+            DrawCube((Vector3){ center.x, (float)band, center.y - 1.31f }, 1.9f, 0.09f, 0.08f,
+                     band % 2 ? GOLD : level->trim);
+    }
+}
+
 void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surfaces)
 {
     const LevelSpec *level = CurrentLevel(campaign);
+    if (campaign->elevatorTime > 0)
+    {
+        DrawMazeElevator(campaign, level);
+        return;
+    }
     DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
-    DrawCampaignSurfaces(level, surfaces, campaign->camera.position, campaign->time);
+    bool elevator = HasElevator(campaign);
+    DrawCampaignSurfaces(level, surfaces, campaign->camera.position, campaign->time, elevator);
+    if (elevator)
+    {
+        DrawMazeElevator(campaign, level);
+        return;
+    }
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
@@ -1104,7 +1211,10 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + hudX + 23 * i, 51 + hudY, 17, 10, i < campaign->health ? level->trim : DARKGRAY);
     const BossSpec *boss = CurrentBoss(campaign);
-    const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Explore the maze" : "Reach the arena")
+    const char *objective = !campaign->checkpoint ? (!level->mazeRows ? "Reach the arena" :
+           campaign->elevatorTime > 0 ? TextFormat("Elevator to floor %d", campaign->mazeFloor + 2) :
+           TextFormat("Floor %d / %d   |   %s", campaign->mazeFloor + 1, MAZE_FLOORS,
+                      HasElevator(campaign) ? "Find the elevator" : "Explore the maze"))
         : boss ? TextFormat("Stomp %s  %d/%d  /  Phase %d/%d", boss->name, campaign->bossHealth, boss->health,
                             campaign->bossPhase + 1, boss->phaseCount)
                : IsMinibossMaze(campaign) ? "Gate to the second maze open" : "Exit open";

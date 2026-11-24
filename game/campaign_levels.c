@@ -178,20 +178,17 @@ static bool ReadMaze(char **cursor, LevelSpec *level)
     return true;
 }
 
-void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
+static int MazeRandom(unsigned int *state, int count)
 {
-    int layout = (int)((stage - 1) % CAMPAIGN_LEVEL_COUNT);
-    int rows = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
-    int cols = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
-    const LevelSpec *palette = &campaignLevels[layout];
-    *level = (LevelSpec){
-        .stone = palette->stone, .trim = palette->trim,
-        .mazeRows = rows, .mazeCols = cols,
-        .firstBoss = (int)((stage - 1) % CAMPAIGN_BOSS_COUNT), .bossCount = 1,
-    };
-    snprintf(level->name, sizeof(level->name), "Infinite maze %llu", stage);
+    *state = *state * 1664525u + 1013904223u;
+    return (int)((*state >> 8) % (unsigned int)count);
+}
+
+static void CarveMaze(LevelSpec *level, unsigned int seed)
+{
+    int rows = level->mazeRows, cols = level->mazeCols;
     memset(level->maze, '#', sizeof(level->maze));
-    int exit = 1 + 2 * GetRandomValue(0, (cols - 3) / 2);
+    int exit = 1 + 2 * MazeRandom(&seed, (cols - 1) / 2);
     level->mazeExit = exit;
     level->maze[exit] = 'E';
     // Depth-first carving visits only odd-numbered interior rows and columns.
@@ -214,7 +211,7 @@ void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
             --depth;
             continue;
         }
-        int next = candidates[GetRandomValue(0, count - 1)];
+        int next = candidates[MazeRandom(&seed, count)];
         level->maze[(cell + next) / 2] = level->maze[next] = '.';
         path[depth++] = (uint16_t)next;
         if (depth > deepest)
@@ -225,6 +222,31 @@ void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
     }
     level->maze[spawn] = 'S';
     BuildMaze(level, spawn);
+}
+
+void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
+{
+    int layout = (int)((stage - 1) % CAMPAIGN_LEVEL_COUNT);
+    int rows = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
+    int cols = GetRandomValue(17, CAMPAIGN_MAZE_SIDE);
+    const LevelSpec *palette = &campaignLevels[layout];
+    *level = (LevelSpec){
+        .stone = palette->stone, .trim = palette->trim,
+        .mazeRows = rows, .mazeCols = cols,
+        .firstBoss = (int)((stage - 1) % CAMPAIGN_BOSS_COUNT), .bossCount = 1,
+    };
+    snprintf(level->name, sizeof(level->name), "Infinite maze %llu", stage);
+    CarveMaze(level, (unsigned int)GetRandomValue(0, 0x7fffff));
+}
+
+void GenerateUpperMaze(LevelSpec *floor, const LevelSpec *base, unsigned int seed)
+{
+    *floor = (LevelSpec){
+        .stone = base->stone, .trim = base->trim,
+        .mazeRows = base->mazeRows, .mazeCols = base->mazeCols,
+    };
+    memcpy(floor->name, base->name, sizeof(floor->name));
+    CarveMaze(floor, seed);
 }
 
 static bool ReadLevel(char *cursor, LevelSpec *level, LevelSpec *extra)
