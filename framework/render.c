@@ -79,12 +79,20 @@ void UnloadImportedModelTextures(Model model)
     }
 }
 
-Model LoadSkybox(const char *path, Shader shader)
+static Model ConfigureSkybox(Model sky, const char *path, Shader shader)
 {
+    if (!IsModelValid(sky))
+    {
+        if (sky.meshes) UnloadModel(sky);
+        return (Model){ 0 };
+    }
     TextureCubemap cubemap = LoadSky(path);
-    if (!IsTextureValid(cubemap)) return (Model){ 0 };
+    if (!IsTextureValid(cubemap))
+    {
+        UnloadModel(sky);
+        return (Model){ 0 };
+    }
 
-    Model sky = LoadModelFromMesh(GenMeshCube(40, 40, 40));
     shader.locs[SHADER_LOC_MAP_CUBEMAP] = GetShaderLocation(shader, "skybox");
     // DrawMesh binds the cube UVs even when they are unused on the non-VAO path.
     if (shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] < 0)
@@ -92,6 +100,16 @@ Model LoadSkybox(const char *path, Shader shader)
     sky.materials[0].shader = shader;
     SetMaterialTexture(&sky.materials[0], MATERIAL_MAP_CUBEMAP, cubemap);
     return sky;
+}
+
+Model LoadSkybox(const char *path, Shader shader)
+{
+    return ConfigureSkybox(LoadModelFromMesh(GenMeshCube(40, 40, 40)), path, shader);
+}
+
+Model LoadSkyboxFromObj(const char *meshPath, const char *path, Shader shader)
+{
+    return ConfigureSkybox(LoadModel(meshPath), path, shader);
 }
 
 void UnloadSkybox(Model sky)

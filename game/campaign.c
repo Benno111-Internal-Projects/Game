@@ -643,6 +643,36 @@ static Texture2D LoadStoneTexture(int tileWidth, int tileHeight, bool stagger)
     return texture;
 }
 
+enum {
+    STONE_NORTH = 1 << 0, STONE_SOUTH = 1 << 1, STONE_WEST = 1 << 2,
+    STONE_EAST = 1 << 3, STONE_TOP = 1 << 4, STONE_BOTTOM = 1 << 5,
+    STONE_ALL = (1 << 6) - 1
+};
+
+static const Vector3 stoneNormals[] = {
+    { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 },
+    { 1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 },
+};
+
+// Group the OBJ triangles by outward normal for neighbor-face culling.
+static bool ReadStoneFaces(CampaignSurfaces *surfaces)
+{
+    const Mesh *mesh = &surfaces->cube.meshes[0];
+    if (surfaces->cube.meshCount != 1 || mesh->vertexCount != 36 || !mesh->vertices || !mesh->normals) return false;
+    int count[6] = { 0 };
+    for (int i = 0; i < mesh->vertexCount; ++i)
+    {
+        const float *n = &mesh->normals[i * 3];
+        Vector3 normal = { n[0], n[1], n[2] };
+        int face = 0;
+        while (face < 6 && Vector3DotProduct(normal, stoneNormals[face]) < 0.99f) ++face;
+        if (face == 6 || count[face] == 6) return false;
+        const float *v = &mesh->vertices[i * 3];
+        surfaces->stoneFaces[face][count[face]++] = (Vector3){ v[0], v[1], v[2] };
+    }
+    return true;
+}
+
 bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, const char *shaderDir)
 {
     surfaces->torch = LoadModel(TextFormat("%smaze-torch.obj", assetDir));
@@ -653,6 +683,16 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, cons
         TraceLog(LOG_ERROR, "Could not load maze torch meshes and materials");
         return false;
     }
+    surfaces->cube = LoadModel(TextFormat("%sunit-cube.obj", assetDir));
+    surfaces->sphere = LoadModel(TextFormat("%ssphere-low.obj", assetDir));
+    surfaces->boss = LoadModel(TextFormat("%sboss-body.obj", assetDir));
+    surfaces->bossWarning = LoadModel(TextFormat("%sboss-warning.obj", assetDir));
+    surfaces->pedestal = LoadModel(TextFormat("%sarena-pedestal.obj", assetDir));
+    surfaces->plane = LoadModel(TextFormat("%sunit-plane.obj", assetDir));
+    if (!IsModelValid(surfaces->cube) || !ReadStoneFaces(surfaces) ||
+        !IsModelValid(surfaces->sphere) || !IsModelValid(surfaces->boss) ||
+        !IsModelValid(surfaces->bossWarning) || !IsModelValid(surfaces->pedestal) ||
+        !IsModelValid(surfaces->plane)) return false;
     surfaces->walls = LoadStoneTexture(32, 16, true);
     surfaces->platforms = LoadStoneTexture(32, 32, false);
     surfaces->ceiling = LoadStoneTexture(16, 32, true);
@@ -671,6 +711,10 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, cons
 
 void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
 {
+    const Model models[] = { surfaces.cube, surfaces.sphere, surfaces.boss, surfaces.bossWarning,
+                             surfaces.pedestal, surfaces.plane };
+    for (size_t i = 0; i < sizeof(models) / sizeof(models[0]); ++i)
+        if (models[i].meshes) UnloadModel(models[i]);
     if (surfaces.torch.meshes) UnloadModel(surfaces.torch);
     if (surfaces.torchFlame.meshes) UnloadModel(surfaces.torchFlame);
     if (surfaces.walls.id) UnloadTexture(surfaces.walls);
@@ -681,49 +725,42 @@ void UnloadCampaignSurfaces(CampaignSurfaces surfaces)
         UnloadShader(surfaces.mazeLighting);
 }
 
-static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, float side, Color tint)
+static void DrawStoneBox(const CampaignSurfaces *surfaces, BoundingBox box, Color tint, unsigned int faces)
 {
-    rlNormal3f(axis == 0 ? side : 0, axis == 1 ? side : 0, axis == 2 ? side : 0);
-    const Vector3 corners[] = { a, b, c, d };
-    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
-    for (int i = 0; i < 4; ++i)
+    Vector3 size = Vector3Subtract(box.max, box.min);
+    Vector3 center = Vector3Add(box.min, Vector3Scale(size, 0.5f));
+    Color side = ColorBrightness(tint, -0.12f);
+    for (int face = 0; face < 6; ++face)
     {
-        Vector3 v = corners[i];
-        float u = axis == 0 ? v.z : v.x;
-        float w = axis == 1 ? v.z : -v.y;
-        rlTexCoord2f(u * 0.5f, w * 0.5f);
-        rlVertex3f(v.x, v.y, v.z);
+        if (!(faces & (1u << face))) continue;
+        Vector3 normal = stoneNormals[face];
+        rlNormal3f(normal.x, normal.y, normal.z);
+        Color color = normal.x || normal.y < 0 ? side : tint;
+        rlColor4ub(color.r, color.g, color.b, color.a);
+        for (int i = 0; i < 6; ++i)
+        {
+            Vector3 local = surfaces->stoneFaces[face][i];
+            Vector3 v = Vector3Add(center, Vector3Multiply(local, size));
+            float u = normal.x ? v.z : v.x;
+            float w = normal.y ? v.z : -v.y;
+            rlTexCoord2f(u * 0.5f, w * 0.5f);
+            rlVertex3f(v.x, v.y, v.z);
+        }
     }
 }
 
-enum {
-    STONE_NORTH = 1 << 0, STONE_SOUTH = 1 << 1, STONE_WEST = 1 << 2,
-    STONE_EAST = 1 << 3, STONE_TOP = 1 << 4, STONE_BOTTOM = 1 << 5,
-    STONE_ALL = (1 << 6) - 1
-};
-
-static void DrawStoneBox(BoundingBox box, Color tint, unsigned int faces)
-{
-    if (!faces) return;
-    Vector3 lo = box.min, hi = box.max;
-    Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
-    Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
-    Color side = ColorBrightness(tint, -0.12f);
-    if (faces & STONE_NORTH) StoneFace(b, a, d, c, 2, -1, tint);
-    if (faces & STONE_SOUTH) StoneFace(e, f, g, h, 2, 1, tint);
-    if (faces & STONE_WEST) StoneFace(a, e, h, d, 0, -1, side);
-    if (faces & STONE_EAST) StoneFace(f, b, c, g, 0, 1, side);
-    if (faces & STONE_TOP) StoneFace(d, h, g, c, 1, 1, tint);
-    if (faces & STONE_BOTTOM) StoneFace(a, b, f, e, 1, -1, side);
-}
-
-static void DrawTexturedStone(Texture2D texture, BoundingBox box, Color color)
+static void DrawTexturedStone(const CampaignSurfaces *surfaces, Texture2D texture, BoundingBox box, Color color)
 {
     rlSetTexture(texture.id);
-    rlBegin(RL_QUADS);
-    DrawStoneBox(box, color, STONE_ALL);
+    rlBegin(RL_TRIANGLES);
+    DrawStoneBox(surfaces, box, color, STONE_ALL);
     rlEnd();
     rlSetTexture(0);
+}
+
+static void DrawScaledObj(Model model, Vector3 position, Vector3 scale, Color tint)
+{
+    DrawModelEx(model, position, (Vector3){ 0, 1, 0 }, 0, scale, tint);
 }
 
 static float TorchFlicker(Vector3 flame, float time)
@@ -908,7 +945,7 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
     enum { CHUNK_SIDE = 16 };
     Matrix clip = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
     rlSetTexture(surfaces->walls.id);
-    rlBegin(RL_QUADS);
+    rlBegin(RL_TRIANGLES);
     for (int row = 0; row < level->mazeRows; row += CHUNK_SIDE)
         for (int col = 0; col < level->mazeCols; col += CHUNK_SIDE)
         {
@@ -932,9 +969,9 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
                     else if (hideExit && z == 0 && x == level->mazeExit)
                         faces = STONE_SOUTH; // Concealed from the maze side, open from the passage.
                     if (!faces) continue;
-                    if (rlCheckRenderBatchLimit(16))
+                    if (rlCheckRenderBatchLimit(24))
                         SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
-                    DrawStoneBox(MazeWall(level, z, x, x + 1), wall, faces);
+                    DrawStoneBox(surfaces, MazeWall(level, z, x, x + 1), wall, faces);
                 }
         }
     rlEnd();
@@ -950,10 +987,10 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     if (!level->mazeRows)
     {
         for (int i = 0; i < level->platformCount; ++i)
-            DrawTexturedStone(surfaces->platforms, level->platforms[i], floor);
+            DrawTexturedStone(surfaces, surfaces->platforms, level->platforms[i], floor);
         for (int i = level->platformCount; i < level->wallEnd; ++i)
-            DrawTexturedStone(surfaces->walls, level->colliders[i], wall);
-        DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+            DrawTexturedStone(surfaces, surfaces->walls, level->colliders[i], wall);
+        DrawTexturedStone(surfaces, surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
         return;
     }
 
@@ -966,16 +1003,16 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     SetShaderValue(surfaces->mazeLighting, surfaces->mazeSizeLocation, &dims, SHADER_UNIFORM_VEC2);
     SetShaderValue(surfaces->mazeLighting, surfaces->flickerLocation, &flicker, SHADER_UNIFORM_FLOAT);
     SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
-    DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
-    DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
+    DrawTexturedStone(surfaces, surfaces->platforms, level->platforms[0], floor);
+    DrawTexturedStone(surfaces, surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
     if (!elevator)
     {
-        DrawTexturedStone(surfaces->platforms, level->platforms[1], floor);
-        DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+        DrawTexturedStone(surfaces, surfaces->platforms, level->platforms[1], floor);
+        DrawTexturedStone(surfaces, surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
         rlSetTexture(surfaces->walls.id);
-        rlBegin(RL_QUADS);
+        rlBegin(RL_TRIANGLES);
         for (int i = level->platformCount; i < level->wallEnd; ++i)
-            DrawStoneBox(level->colliders[i], wall, STONE_ALL);
+            DrawStoneBox(surfaces, level->colliders[i], wall, STONE_ALL);
         rlEnd();
     }
     DrawMazeWalls(level, surfaces, lightmap, wall, !elevator);
@@ -983,47 +1020,47 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     DrawWallTorches(level, surfaces, eye, time);
 }
 
-static void DrawBossModel(const Campaign *campaign, const BossSpec *boss)
+static void DrawBossModel(const Campaign *campaign, const CampaignSurfaces *surfaces, const BossSpec *boss)
 {
     Vector3 center = campaign->bossPosition;
     Color phaseColor = ColorLerp(boss->color, ORANGE, campaign->bossPhase * 0.26f);
     Color body = campaign->guardTimer > 0 ? RAYWHITE : phaseColor;
-    DrawCylinder(center, boss->radius * 0.76f, boss->radius, boss->height, 12, body);
+    DrawScaledObj(surfaces->boss, center, (Vector3){ boss->radius, boss->height, boss->radius }, body);
     Vector3 core = center;
     core.y += boss->height * 0.96f;
-    DrawSphereEx(core, boss->radius * 0.32f, 8, 12, RAYWHITE);
+    DrawModel(surfaces->sphere, core, boss->radius * 0.32f, RAYWHITE);
     if (campaign->checkpoint && campaign->attackTimer < 0.58f)
     {
         Vector3 warning = campaign->bossPosition;
         warning.y += 0.024f;
-        DrawCylinderWires(warning, boss->radius * 1.6f, boss->radius * 1.6f, 0.035f, 24, GOLD);
+        DrawModel(surfaces->bossWarning, warning, boss->radius * 1.6f, GOLD);
     }
 }
 
-static void DrawMazeElevator(const Campaign *campaign, const LevelSpec *level)
+static void DrawMazeElevator(const Campaign *campaign, const CampaignSurfaces *surfaces, const LevelSpec *level)
 {
     Vector2 center = ElevatorCenter(level);
     bool riding = campaign->elevatorTime > 0;
     float y = riding ? campaign->camera.position.y - GetPlayerEye(&campaign->player).y : 0;
     const Color steel = { 64, 84, 96, 255 };
-    DrawCube((Vector3){ center.x, y - 0.095f, center.y }, 2.48f, 0.24f, 2.48f, steel);
-    DrawCube((Vector3){ center.x, y + 3.12f, center.y }, 2.48f, 0.24f, 2.48f, steel);
+    DrawScaledObj(surfaces->cube, (Vector3){ center.x, y - 0.095f, center.y }, (Vector3){ 2.48f, 0.24f, 2.48f }, steel);
+    DrawScaledObj(surfaces->cube, (Vector3){ center.x, y + 3.12f, center.y }, (Vector3){ 2.48f, 0.24f, 2.48f }, steel);
     for (int side = -1; side <= 1; side += 2)
     {
         float x = center.x + side * 1.18f;
-        DrawCube((Vector3){ x, y + 1.5f, center.y }, 0.12f, 3.0f, 2.48f, steel);
-        DrawCube((Vector3){ x, y + 2.65f, center.y + 1.24f }, 0.13f, 0.7f, 0.08f, GOLD);
+        DrawScaledObj(surfaces->cube, (Vector3){ x, y + 1.5f, center.y }, (Vector3){ 0.12f, 3.0f, 2.48f }, steel);
+        DrawScaledObj(surfaces->cube, (Vector3){ x, y + 2.65f, center.y + 1.24f }, (Vector3){ 0.13f, 0.7f, 0.08f }, GOLD);
     }
 
     if (!riding)
-        DrawCube((Vector3){ center.x, 1.5f, center.y - 1.18f }, 2.48f, 3.0f, 0.12f, steel);
+        DrawScaledObj(surfaces->cube, (Vector3){ center.x, 1.5f, center.y - 1.18f }, (Vector3){ 2.48f, 3.0f, 0.12f }, steel);
     else
     {
-        DrawCube((Vector3){ center.x, y + 1.5f, center.y + 1.18f }, 2.48f, 3.0f, 0.12f, steel);
+        DrawScaledObj(surfaces->cube, (Vector3){ center.x, y + 1.5f, center.y + 1.18f }, (Vector3){ 2.48f, 3.0f, 0.12f }, steel);
         // The fixed bands behind the moving cabin make the ascent visible.
-        DrawCube((Vector3){ center.x, 4.0f, center.y - 1.4f }, 2.48f, 9.0f, 0.14f, (Color){ 38, 47, 56, 255 });
+        DrawScaledObj(surfaces->cube, (Vector3){ center.x, 4.0f, center.y - 1.4f }, (Vector3){ 2.48f, 9.0f, 0.14f }, (Color){ 38, 47, 56, 255 });
         for (int band = 1; band < 9; ++band)
-            DrawCube((Vector3){ center.x, (float)band, center.y - 1.31f }, 1.9f, 0.09f, 0.08f,
+            DrawScaledObj(surfaces->cube, (Vector3){ center.x, (float)band, center.y - 1.31f }, (Vector3){ 1.9f, 0.09f, 0.08f },
                      band % 2 ? GOLD : level->trim);
     }
 }
@@ -1033,51 +1070,45 @@ void DrawCampaignWorld(const Campaign *campaign, const CampaignSurfaces *surface
     const LevelSpec *level = CurrentLevel(campaign);
     if (campaign->elevatorTime > 0)
     {
-        DrawMazeElevator(campaign, level);
+        DrawMazeElevator(campaign, surfaces, level);
         return;
     }
-    DrawPlane((Vector3){ 0, -13, -19 }, (Vector2){ 130, 130 }, (Color){ 27, 47, 59, 255 });
+    DrawModel(surfaces->plane, (Vector3){ 0, -13, -19 }, 130, (Color){ 27, 47, 59, 255 });
     bool elevator = HasElevator(campaign);
     DrawCampaignSurfaces(level, surfaces, campaign->camera.position, campaign->time, elevator);
     if (elevator)
     {
-        DrawMazeElevator(campaign, level);
+        DrawMazeElevator(campaign, surfaces, level);
         return;
     }
     BoundingBox arena = Arena(campaign);
     Vector3 gate = GatePosition(arena);
     Color frame = CurrentBoss(campaign) ? (Color){ 96, 116, 128, 255 } : level->trim;
-    DrawCube((Vector3){ gate.x - 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
-    DrawCube((Vector3){ gate.x + 0.83f, gate.y + 1.1f, gate.z }, 0.2f, 2.2f, 0.26f, frame);
-    DrawCube((Vector3){ gate.x, gate.y + 2.305f, gate.z }, 1.86f, 0.21f, 0.26f, frame);
+    DrawScaledObj(surfaces->cube, (Vector3){ gate.x - 0.83f, gate.y + 1.1f, gate.z }, (Vector3){ 0.2f, 2.2f, 0.26f }, frame);
+    DrawScaledObj(surfaces->cube, (Vector3){ gate.x + 0.83f, gate.y + 1.1f, gate.z }, (Vector3){ 0.2f, 2.2f, 0.26f }, frame);
+    DrawScaledObj(surfaces->cube, (Vector3){ gate.x, gate.y + 2.305f, gate.z }, (Vector3){ 1.86f, 0.21f, 0.26f }, frame);
     for (int side = -1; side <= 1; side += 2)
     {
         float x = side < 0 ? arena.min.x - 0.55f : arena.max.x + 0.55f;
         float z = arena.max.z - 1.0f;
-        DrawCylinder((Vector3){ x, arena.max.y - 1.5f, z }, 0.31f, 0.46f, 2.42f, 6, level->stone);
+        DrawScaledObj(surfaces->pedestal, (Vector3){ x, arena.max.y - 1.5f, z }, (Vector3){ 1, 2.42f, 1 }, level->stone);
         float pulse = 0.04f * sinf(campaign->time * 3.0f + side);
-        DrawSphereEx((Vector3){ x, arena.max.y + 1.17f + pulse, z }, 0.23f, 6, 8, level->trim);
+        DrawModel(surfaces->sphere, (Vector3){ x, arena.max.y + 1.17f + pulse, z }, 0.23f, level->trim);
     }
     const BossSpec *boss = CurrentBoss(campaign);
-    if (boss) DrawBossModel(campaign, boss);
+    if (boss) DrawBossModel(campaign, surfaces, boss);
     for (int i = 0; i < CAMPAIGN_MAX_ORBS; ++i)
-        if (campaign->orbs[i].life > 0) DrawSphereEx(campaign->orbs[i].position, 0.18f, 5, 8, ORANGE);
+        if (campaign->orbs[i].life > 0) DrawModel(surfaces->sphere, campaign->orbs[i].position, 0.18f, ORANGE);
     if (!boss)
     {
         Vector3 panel = { gate.x, gate.y + 1.05f, gate.z };
         rlDrawRenderBatchActive();
         rlDisableDepthMask();
         rlDisableBackfaceCulling();
-        DrawTriangle3D((Vector3){ panel.x - 0.725f, panel.y - 1.04f, panel.z },
-                       (Vector3){ panel.x + 0.725f, panel.y - 1.04f, panel.z },
-                       (Vector3){ panel.x + 0.725f, panel.y + 1.04f, panel.z }, Fade(frame, 0.44f));
-        DrawTriangle3D((Vector3){ panel.x - 0.725f, panel.y - 1.04f, panel.z },
-                       (Vector3){ panel.x + 0.725f, panel.y + 1.04f, panel.z },
-                       (Vector3){ panel.x - 0.725f, panel.y + 1.04f, panel.z }, Fade(frame, 0.44f));
-        rlDrawRenderBatchActive();
+        DrawModelEx(surfaces->plane, panel, (Vector3){ 1, 0, 0 }, 90,
+                    (Vector3){ 1.45f, 1, 2.08f }, Fade(frame, 0.44f));
         rlEnableBackfaceCulling();
         rlEnableDepthMask();
-        DrawCubeWires(panel, 1.45f, 2.08f, 0.08f, RAYWHITE);
     }
 }
 

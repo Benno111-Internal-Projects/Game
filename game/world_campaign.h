@@ -24,7 +24,7 @@ typedef struct WorldCampaign {
 } WorldCampaign;
 
 // Pass -1 to play the full campaign, or a world index to play one level.
-bool OpenWorldCampaign(WorldCampaign *campaign, int level);
+bool OpenWorldCampaign(WorldCampaign *campaign, int level, const char *assetsDir);
 void TeleportWorldRandomly(WorldCampaign *campaign);
 int WorldCampaignVisibleChunks(const WorldCampaign *campaign);
 void CloseWorldCampaign(WorldCampaign *campaign);

@@ -32,93 +32,65 @@ struct WorldModels {
     Model beacon, column;
 };
 
-typedef struct PropPart {
-    const Mesh *mesh;
-    Vector3 offset, scale;
-    Color color;
-    float taper;
-} PropPart;
-
-// Build an ordinary GPU mesh so props never split across immediate batch flushes.
-static Model MakeWorldProp(const PropPart *parts, size_t count)
+// These OBJ materials carry only a tint. Bake it into the vertices so each tree
+// still needs only one draw, even though the OBJ has separate bark and leaf meshes.
+static Model LoadWorldTree(const char *path)
 {
-    Mesh mesh = {0};
-    for (size_t i = 0; i < count; ++i) mesh.triangleCount += parts[i].mesh->triangleCount;
-    mesh.vertexCount = mesh.triangleCount * 3;
-    mesh.vertices = MemAlloc((unsigned int)mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals = MemAlloc((unsigned int)mesh.vertexCount * 3 * sizeof(float));
-    mesh.texcoords = MemAlloc((unsigned int)mesh.vertexCount * 2 * sizeof(float));
-    mesh.colors = MemAlloc((unsigned int)mesh.vertexCount * 4);
-    if (!mesh.vertices || !mesh.normals || !mesh.texcoords || !mesh.colors)
+    Model tree = LoadModel(path);
+    if (!IsModelValid(tree) || tree.meshCount <= 1) return tree;
+    Mesh combined = {0};
+    for (int i = 0; i < tree.meshCount; ++i)
+        combined.vertexCount += tree.meshes[i].vertexCount;
+    combined.triangleCount = combined.vertexCount / 3;
+    unsigned int count = (unsigned int)combined.vertexCount;
+    combined.vertices = MemAlloc(count * 3 * sizeof(float));
+    combined.normals = MemAlloc(count * 3 * sizeof(float));
+    combined.texcoords = MemAlloc(count * 2 * sizeof(float));
+    combined.colors = MemAlloc(count * 4);
+    if (!combined.vertices || !combined.normals || !combined.texcoords || !combined.colors)
     {
-        UnloadMesh(mesh);
-        return (Model){0};
+        UnloadMesh(combined);
+        return tree;
     }
 
-    int out = 0;
-    for (size_t i = 0; i < count; ++i)
+    int first = 0;
+    for (int i = 0; i < tree.meshCount; ++i)
     {
-        const PropPart *part = &parts[i];
-        const Mesh *source = part->mesh;
-        for (int vertex = 0; vertex < source->triangleCount * 3; ++vertex, ++out)
+        const Mesh *mesh = &tree.meshes[i];
+        size_t vertices = (size_t)mesh->vertexCount;
+        memcpy(combined.vertices + first * 3, mesh->vertices, vertices * 3 * sizeof(float));
+        memcpy(combined.normals + first * 3, mesh->normals, vertices * 3 * sizeof(float));
+        memcpy(combined.texcoords + first * 2, mesh->texcoords, vertices * 2 * sizeof(float));
+        Color tint = tree.materials[tree.meshMaterial[i]].maps[MATERIAL_MAP_ALBEDO].color;
+        for (int j = 0; j < mesh->vertexCount; ++j)
         {
-            int input = source->indices ? source->indices[vertex] : vertex;
-            const float *point = &source->vertices[input * 3];
-            float width = 1.0f - part->taper * point[1];
-            mesh.vertices[out * 3] = part->offset.x + part->scale.x * point[0] * width;
-            mesh.vertices[out * 3 + 1] = part->offset.y + part->scale.y * point[1];
-            mesh.vertices[out * 3 + 2] = part->offset.z + part->scale.z * point[2] * width;
-            memcpy(&mesh.normals[out * 3], &source->normals[input * 3], 3 * sizeof(float));
-            memcpy(&mesh.texcoords[out * 2], &source->texcoords[input * 2], 2 * sizeof(float));
-            mesh.colors[out * 4] = part->color.r;
-            mesh.colors[out * 4 + 1] = part->color.g;
-            mesh.colors[out * 4 + 2] = part->color.b;
-            mesh.colors[out * 4 + 3] = part->color.a;
+            unsigned char *rgba = combined.colors + (first + j) * 4;
+            rgba[0] = tint.r;
+            rgba[1] = tint.g;
+            rgba[2] = tint.b;
+            rgba[3] = tint.a;
         }
+        first += mesh->vertexCount;
     }
-    // LoadModelFromMesh uses buffers already uploaded by the caller.
-    UploadMesh(&mesh, false);
-    if (!mesh.vboId || !mesh.vboId[0] || !mesh.vboId[1] || !mesh.vboId[2] || !mesh.vboId[3])
+
+    UploadMesh(&combined, false);
+    if (!combined.vboId || !combined.vboId[0] || !combined.vboId[3])
     {
-        UnloadMesh(mesh);
-        return (Model){0};
+        UnloadMesh(combined);
+        return tree;
     }
-    return LoadModelFromMesh(mesh);
+    UnloadModel(tree);
+    return LoadModelFromMesh(combined);
 }
 
-static bool LoadWorldModels(WorldModels *models)
+static bool LoadWorldModels(WorldModels *models, const char *assetsDir)
 {
-    Mesh column = GenMeshCylinder(1, 1, 8);
-    Mesh sphere = GenMeshSphere(1, 6, 9);
-    Mesh distantSphere = GenMeshSphere(1, 4, 6);
-    bool ready = column.vertices && sphere.vertices && distantSphere.vertices;
-    if (ready)
-    {
-        PropPart tree[] = {
-            { &column, {0, -0.30f, 0}, {0.44f, 4.5f, 0.44f}, {103, 73, 49, 255}, 0.52f },
-            { &sphere, {0, 4.35f, 0}, {2.05f, 2.05f, 2.05f}, {72, 123, 56, 255}, 0 },
-            { &sphere, {1.2f, 3.8f, 0.55f}, {1.44f, 1.44f, 1.44f}, {91, 145, 62, 255}, 0 },
-            { &sphere, {-1.35f, 3.73f, -0.45f}, {1.48f, 1.48f, 1.48f}, {54, 100, 49, 255}, 0 },
-        };
-        models->trees[0] = MakeWorldProp(tree, 4);
-        tree[1].mesh = &distantSphere;
-        models->trees[1] = MakeWorldProp(tree, 2);
-
-        PropPart beacon[] = {
-            { &column, {0, -0.12f, 0}, {1.65f, 0.47f, 1.65f}, GOLD, 0.30f },
-            { &column, {0, 0.35f, 0}, {0.42f, 5.0f, 0.42f}, GOLD, 0.31f },
-            { &sphere, {0, 5.5f, 0}, {0.78f, 0.78f, 0.78f}, GOLD, 0 },
-        };
-        models->beacon = MakeWorldProp(beacon, 3);
-        PropPart post = { &column, {0, 0, 0}, {1, 1, 1}, WHITE, 0 };
-        models->column = MakeWorldProp(&post, 1);
-        ready = IsModelValid(models->trees[0]) && IsModelValid(models->trees[1]) &&
-                IsModelValid(models->beacon) && IsModelValid(models->column);
-    }
-    UnloadMesh(column);
-    UnloadMesh(sphere);
-    UnloadMesh(distantSphere);
-    return ready;
+    models->trees[0] = LoadWorldTree(TextFormat("%swillow-tree.obj", assetsDir));
+    models->trees[1] = LoadWorldTree(TextFormat("%swillow-tree-low.obj", assetsDir));
+    models->beacon = LoadModel(TextFormat("%sworld-beacon.obj", assetsDir));
+    models->column = LoadModel(TextFormat("%sworld-column.obj", assetsDir));
+    return IsModelValid(models->trees[0]) && IsModelValid(models->trees[1]) &&
+           IsModelValid(models->beacon) && IsModelValid(models->column);
 }
 
 static float GroundHeight(const void *data, float x, float z)
@@ -323,13 +295,13 @@ int WorldCampaignVisibleChunks(const WorldCampaign *campaign)
     return count;
 }
 
-bool OpenWorldCampaign(WorldCampaign *campaign, int level)
+bool OpenWorldCampaign(WorldCampaign *campaign, int level, const char *assetsDir)
 {
     if (level < -1 || level >= WORLD_COUNT) return false;
     *campaign = (WorldCampaign){ .world = level < 0 ? 0 : level, .singleWorld = level >= 0 };
     campaign->chunks = calloc(CACHE_SIDE * CACHE_SIDE, sizeof(*campaign->chunks));
     campaign->models = calloc(1, sizeof(*campaign->models));
-    if (!campaign->chunks || !campaign->models || !LoadWorldModels(campaign->models))
+    if (!campaign->chunks || !campaign->models || !LoadWorldModels(campaign->models, assetsDir))
     {
         CloseWorldCampaign(campaign);
         return false;

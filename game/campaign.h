@@ -37,6 +37,8 @@ enum { MAZE_FLOORS = 3 };
 typedef struct CampaignSurfaces {
     Texture2D walls, platforms, ceiling;
     Model torch, torchFlame;
+    Model cube, sphere, boss, bossWarning, pedestal, plane;
+    Vector3 stoneFaces[6][6];
     Shader mazeLighting;
     Texture2D mazeLightmap;
     const LevelSpec *litLevel;

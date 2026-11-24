@@ -53,6 +53,7 @@ static const int gameKeys[ACTION_COUNT] = {
 typedef struct BallDrawData {
     const DynamicVertexBuffer *marker;
     Material markerMaterial;
+    const Model *spheres;
 } BallDrawData;
 
 static void DrawSceneModel(const void *context, Vector3 position, float scale, float yaw, size_t lod)
@@ -65,17 +66,14 @@ static void DrawSceneModel(const void *context, Vector3 position, float scale, f
 static void DrawSceneBall(const void *context, Vector3 position, float radius, size_t lod)
 {
     const BallDrawData *data = context;
-    static const int rings[] = { 12, 8, 4 };
-    static const int slices[] = { 16, 10, 6 };
     DrawDynamicTriangles(data->marker, data->markerMaterial, MatrixIdentity());
-    DrawSphereEx(position, radius, rings[lod], slices[lod], ORANGE);
+    DrawModel(data->spheres[lod], position, radius, ORANGE);
 }
 
 static void DrawEditorSphere(const void *context, Vector3 position, float radius, size_t lod)
 {
-    (void)context;
     (void)lod;
-    DrawSphereEx(position, radius, 12, 16, SKYBLUE);
+    DrawModel(*(const Model *)context, position, radius, SKYBLUE);
 }
 
 static float TerrainGround(const void *surface, float x, float z)
@@ -88,15 +86,14 @@ static Vector3 TerrainSlope(const void *surface, float x, float z)
     return GetTerrainNormal(surface, x, z);
 }
 
-static Vector2 UpdateBallMarker(DynamicVertexBuffer *buffer, PhysicsSphere ball, const TerrainMap *terrain)
+static Vector2 UpdateBallMarker(DynamicVertexBuffer *buffer, const Mesh *marker, PhysicsSphere ball, const TerrainMap *terrain)
 {
-    float x = ball.position.x;
-    float z = ball.position.z;
-    float radius = ball.radius;
-    float vertices[] = {
-        x - radius, 0, z,  x, 0, z + radius,  x + radius, 0, z,
-        x - radius, 0, z,  x + radius, 0, z,  x, 0, z - radius,
-    };
+    float vertices[18];
+    for (int i = 0; i < 18; i += 3)
+    {
+        vertices[i] = ball.position.x + marker->vertices[i] * ball.radius;
+        vertices[i + 2] = ball.position.z + marker->vertices[i + 2] * ball.radius;
+    }
     Vector2 limits = { INFINITY, -INFINITY };
     for (int i = 0; i < 18; i += 3)
     {
@@ -113,7 +110,8 @@ typedef struct StarterGame {
     const char *modelPath;
     const char *texturePath;
     const char *skyPath;
-    Model model;
+    char assetsDir[4096];
+    Model model, ballSpheres[3], markerModel, gridModels[2];
     Texture2D override;
     Texture2D *originals;
     Model sky;
@@ -161,13 +159,13 @@ static bool InitStarter(void *state)
     StarterGame *game = state;
 #if defined(PLATFORM_ANDROID)
     // NativeActivity assets use APK-relative paths.
-    const char *assetsDir = "";
+    const char *assetsDir = game->assetsDir;
     const char *shadersDir = "";
 #else
     const char *appDir = GetApplicationDirectory();
-    char assetsDir[4096];
+    char *assetsDir = game->assetsDir;
     char shadersDir[4096];
-    if (snprintf(assetsDir, sizeof(assetsDir), "%sassets/", appDir) >= (int)sizeof(assetsDir) ||
+    if (snprintf(assetsDir, sizeof(game->assetsDir), "%sassets/", appDir) >= (int)sizeof(game->assetsDir) ||
         snprintf(shadersDir, sizeof(shadersDir), "%sshaders/", appDir) >= (int)sizeof(shadersDir))
         return false;
 #endif
@@ -207,7 +205,18 @@ static bool InitStarter(void *state)
     for (int i = 0; i < game->model.materialCount; ++i)
         game->model.materials[i].shader = game->shaded;
 
-    game->sky = LoadSkybox(game->skyPath, game->skyShader);
+    game->sky = LoadSkyboxFromObj(TextFormat("%sunit-cube.obj", assetsDir), game->skyPath, game->skyShader);
+    const char *sphereFiles[] = { "sphere.obj", "sphere-medium.obj", "sphere-low.obj" };
+    for (int i = 0; i < 3; ++i)
+    {
+        game->ballSpheres[i] = LoadModel(TextFormat("%s%s", assetsDir, sphereFiles[i]));
+        if (!IsModelValid(game->ballSpheres[i])) return false;
+    }
+    game->markerModel = LoadModel(TextFormat("%sball-marker.obj", assetsDir));
+    game->gridModels[0] = LoadModel(TextFormat("%ssandbox-grid.obj", assetsDir));
+    game->gridModels[1] = LoadModel(TextFormat("%seditor-grid.obj", assetsDir));
+    if (!IsModelValid(game->markerModel) || game->markerModel.meshes[0].vertexCount != 6 ||
+        (!IsModelValid(game->gridModels[0]) || !IsModelValid(game->gridModels[1]))) return false;
     if (!IsModelValid(game->sky)) return false;
 
     BoundingBox bounds = GetModelBoundingBox(game->model);
@@ -229,7 +238,7 @@ static bool InitStarter(void *state)
     game->occlusionEnabled = true;
     game->markerMaterial = LoadMaterialDefault();
     game->markerMaterial.maps[MATERIAL_MAP_ALBEDO].color = (Color){ 86, 57, 24, 255 };
-    game->ballDraw = (BallDrawData){ &game->ballMarker, game->markerMaterial };
+    game->ballDraw = (BallDrawData){ &game->ballMarker, game->markerMaterial, game->ballSpheres };
     static const float ballLodDistances[] = { 7.5f, 11.0f };
     game->modelPrefab = (ScenePrefab){
         .localBounds = { Vector3Subtract(bounds.min, center), Vector3Subtract(bounds.max, center) },
@@ -247,7 +256,7 @@ static bool InitStarter(void *state)
     };
     game->spherePrefab = (ScenePrefab){
         .localBounds = { { -1, -1, -1 }, { 1, 1, 1 } },
-        .draw = DrawEditorSphere,
+        .draw = DrawEditorSphere, .data = &game->ballSpheres[0],
     };
     InitSceneEditor(&game->editor, &game->modelPrefab, scale, &game->spherePrefab, game->floorHeight);
     game->ballInstance.prefab = &game->ballPrefab;
@@ -516,7 +525,7 @@ static bool UpdateStarter(void *state, float deltaTime)
             }
             else if (choice >= 0)
             {
-                if (OpenWorldCampaign(&game->worlds, choice == WORLD_PICK_FULL ? -1 : choice / 2))
+                if (OpenWorldCampaign(&game->worlds, choice == WORLD_PICK_FULL ? -1 : choice / 2, game->assetsDir))
                 {
                     game->debugTools = (DebugTools){0};
                     game->worldOpen = true;
@@ -728,7 +737,7 @@ static bool UpdateStarter(void *state, float deltaTime)
         StepPhysicsSphereOnSurface(&game->ball, TerrainGround, terrain, deltaTime);
         if (previousVelocity < -0.6f && game->ball.velocity.y >= 0.0f)
             impact = -previousVelocity;
-        game->ballMarkerHeight = UpdateBallMarker(&game->ballMarker, game->ball, terrain);
+        game->ballMarkerHeight = UpdateBallMarker(&game->ballMarker, &game->markerModel.meshes[0], game->ball, terrain);
     }
 
     if (game->ballInstance.enabled)
@@ -949,10 +958,7 @@ static void DrawStarter(const void *state)
     }
     else if (game->editorOpen || game->grid)
     {
-        rlPushMatrix();
-        rlTranslatef(0, game->floorHeight, 0);
-        DrawGrid(game->editorOpen ? 40 : 20, 0.5f);
-        rlPopMatrix();
+        DrawModel(game->gridModels[game->editorOpen], (Vector3){ 0, game->floorHeight, 0 }, 0.5f, WHITE);
     }
     SceneObject objects[EDITOR_MAX_OBJECTS + 1];
     size_t count = GetEditedScene(&game->editor, objects);
@@ -1043,6 +1049,11 @@ static void ShutdownStarter(void *state)
     if (game->override.id) UnloadTexture(game->override);
     UnloadImportedModelTextures(game->model);
     UnloadModel(game->model);
+    for (int i = 0; i < 3; ++i)
+        if (game->ballSpheres[i].meshes) UnloadModel(game->ballSpheres[i]);
+    if (game->markerModel.meshes) UnloadModel(game->markerModel);
+    for (int i = 0; i < 2; ++i)
+        if (game->gridModels[i].meshes) UnloadModel(game->gridModels[i]);
     UnloadSkybox(game->sky);
     if (game->shaded.id && game->shaded.id != rlGetShaderIdDefault()) UnloadShader(game->shaded);
     if (game->skyShader.id && game->skyShader.id != rlGetShaderIdDefault()) UnloadShader(game->skyShader);

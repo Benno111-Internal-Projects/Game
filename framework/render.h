@@ -5,6 +5,7 @@
 
 // The returned skybox owns its cubemap. The caller owns the shader.
 Model LoadSkybox(const char *path, Shader shader);
+Model LoadSkyboxFromObj(const char *meshPath, const char *path, Shader shader);
 void DrawSky(Model sky, Vector3 cameraPosition);
 void UnloadSkybox(Model sky);
 
