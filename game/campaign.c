@@ -749,10 +749,18 @@ static void DrawStoneBox(const CampaignSurfaces *surfaces, BoundingBox box, Colo
     }
 }
 
-static void DrawTexturedStone(const CampaignSurfaces *surfaces, Texture2D texture, BoundingBox box, Color color)
+static void BeginStoneBatch(Texture2D texture)
 {
+    // A texture switch can start a fresh draw in quad mode, and changing
+    // its primitive mode resets its texture to white.
     rlSetTexture(texture.id);
     rlBegin(RL_TRIANGLES);
+    rlSetTexture(texture.id);
+}
+
+static void DrawTexturedStone(const CampaignSurfaces *surfaces, Texture2D texture, BoundingBox box, Color color)
+{
+    BeginStoneBatch(texture);
     DrawStoneBox(surfaces, box, color, STONE_ALL);
     rlEnd();
     rlSetTexture(0);
@@ -944,8 +952,7 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
 {
     enum { CHUNK_SIDE = 16 };
     Matrix clip = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
-    rlSetTexture(surfaces->walls.id);
-    rlBegin(RL_TRIANGLES);
+    BeginStoneBatch(surfaces->walls);
     for (int row = 0; row < level->mazeRows; row += CHUNK_SIDE)
         for (int col = 0; col < level->mazeCols; col += CHUNK_SIDE)
         {
@@ -1009,8 +1016,7 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     {
         DrawTexturedStone(surfaces, surfaces->platforms, level->platforms[1], floor);
         DrawTexturedStone(surfaces, surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
-        rlSetTexture(surfaces->walls.id);
-        rlBegin(RL_TRIANGLES);
+        BeginStoneBatch(surfaces->walls);
         for (int i = level->platformCount; i < level->wallEnd; ++i)
             DrawStoneBox(surfaces, level->colliders[i], wall, STONE_ALL);
         rlEnd();
