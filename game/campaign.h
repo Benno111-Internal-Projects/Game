@@ -2,6 +2,7 @@
 #define DORF_CAMPAIGN_H
 
 #include "camera.h"
+#include "debug_tools.h"
 #include "input.h"
 #include "player.h"
 #include "player_touch.h"
@@ -41,6 +42,7 @@ typedef struct Campaign {
     bool gameOver;
     CampaignDeath death;
     PlayerController player;
+    DebugOptions debugOptions;
     WalkCamera view;
     Camera3D camera;
     PlayerTouch touch;
@@ -55,6 +57,7 @@ typedef struct Campaign {
 
 void StartCampaign(Campaign *campaign, int level, bool debugRun);
 void StartEndlessMazes(Campaign *campaign, struct LevelSpec *level);
+void TeleportCampaignRandomly(Campaign *campaign);
 void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
                   bool sprint, bool retry, float dt);
 bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *shaderDir);

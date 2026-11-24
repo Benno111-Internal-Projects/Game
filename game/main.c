@@ -9,6 +9,7 @@
 #include "campaign.h"
 #include "campaign_content.h"
 #include "dynamic_buffer.h"
+#include "debug_tools.h"
 #include "input.h"
 #include "game_logic.h"
 #include "physics.h"
@@ -133,6 +134,7 @@ typedef struct StarterGame {
     PrefabInstance ballInstance, titleModel;
     bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen, worldPickerOpen, worldEditorOpen;
     Campaign campaign;
+    DebugTools debugTools;
     WorldCampaign worlds;
     WorldEditor worldEditor;
     LevelSpec endlessLevel;
@@ -341,6 +343,7 @@ static void DrawPlayerAvatar(const PlayerController *player)
 static void OpenCampaign(StarterGame *game, int level, bool debug, bool infinite)
 {
     game->campaignSurfaces.litLevel = NULL;
+    game->debugTools = (DebugTools){0};
     if (infinite) StartEndlessMazes(&game->campaign, &game->endlessLevel);
     else StartCampaign(&game->campaign, level, debug);
     game->campaignOpen = true;
@@ -409,6 +412,47 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     if (!touch && campaign->death != CAMPAIGN_DEATH_NONE) EnableCursor();
 }
 
+static bool HandleGameDebug(StarterGame *game, PlayerTouch *touch, InputPointer pointer, bool escape)
+{
+    bool wasOpen = game->debugTools.open;
+    game->titlePointer = pointer.position;
+    DebugAction action = UpdateDebugTools(&game->debugTools, pointer, IsKeyPressed(KEY_F3), escape);
+    if (wasOpen != game->debugTools.open)
+    {
+        ResetPlayerTouch(touch);
+        if (!HasPlayerTouchControls())
+        {
+            if (game->debugTools.open) EnableCursor();
+            else DisableCursor();
+        }
+    }
+
+    DebugOptions options = game->debugTools.options;
+    if (game->campaignOpen)
+    {
+        game->campaign.debugOptions = options;
+        if (!options.enabled && !game->campaign.debugRun && game->campaign.lives < 1)
+            game->campaign.lives = 1;
+        if (action == DEBUG_TELEPORT) TeleportCampaignRandomly(&game->campaign);
+    }
+    else if (game->worldOpen)
+    {
+        game->worlds.debugOptions = options;
+        if (action == DEBUG_TELEPORT) TeleportWorldRandomly(&game->worlds);
+    }
+    else if (action == DEBUG_TELEPORT)
+    {
+        BoundingBox boxes[EDITOR_MAX_OBJECTS];
+        PlayerWorld world = GetPlayerWorld(game, boxes);
+        world.disableSliding = options.noSliding;
+        game->player = SpawnPlayer((Vector2){ (float)GetRandomValue(-9, 9), (float)GetRandomValue(-9, 9) }, &world);
+        game->walk.position = GetPlayerEye(&game->player);
+        UpdateWalkCamera(&game->camera, &game->walk, Vector2Zero(), Vector2Zero(), 0);
+        ResetPlayerTouch(touch);
+    }
+    return action != DEBUG_PLAY;
+}
+
 static bool UpdateStarter(void *state, float deltaTime)
 {
     StarterGame *game = state;
@@ -419,6 +463,12 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (game->worldOpen)
     {
         game->titlePointer = pointer.position;
+        if (!game->worlds.paused && !game->worlds.complete &&
+            HandleGameDebug(game, &game->worlds.touch, pointer, actions[ACTION_EXIT].pressed))
+        {
+            UpdateStarterAudio(game);
+            return true;
+        }
         Vector2 movement = {
             (float)(actions[ACTION_RIGHT].down - actions[ACTION_LEFT].down),
             (float)(actions[ACTION_FORWARD].down - actions[ACTION_BACK].down),
@@ -463,6 +513,7 @@ static bool UpdateStarter(void *state, float deltaTime)
             {
                 if (OpenWorldCampaign(&game->worlds, choice == WORLD_PICK_FULL ? -1 : choice / 2))
                 {
+                    game->debugTools = (DebugTools){0};
                     game->worldOpen = true;
                     game->worldPickerOpen = false;
                     if (!HasPlayerTouchControls()) DisableCursor();
@@ -488,6 +539,13 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (game->campaignOpen)
     {
         game->titlePointer = pointer.position;
+        if (!game->campaign.paused && !game->campaign.cleared && !game->campaign.gameOver &&
+            game->campaign.death == CAMPAIGN_DEATH_NONE &&
+            HandleGameDebug(game, &game->campaign.touch, pointer, actions[ACTION_EXIT].pressed))
+        {
+            UpdateStarterAudio(game);
+            return true;
+        }
         UpdateCampaignMode(game, actions, pointer, deltaTime);
         if (game->campaignOpen) PrepareCampaignLighting(&game->campaign, &game->campaignSurfaces);
         UpdateStarterAudio(game);
@@ -572,6 +630,7 @@ static bool UpdateStarter(void *state, float deltaTime)
         }
         if (action == TITLE_SANDBOX)
         {
+            game->debugTools = (DebugTools){0};
             game->titleOpen = false;
             game->pointerCaptured = pointer.down;
             pointer.pressed = false;
@@ -581,6 +640,11 @@ static bool UpdateStarter(void *state, float deltaTime)
             UpdateStarterAudio(game);
             return true;
         }
+    }
+    if (game->walking && HandleGameDebug(game, &game->playerTouch, pointer, actions[ACTION_EXIT].pressed))
+    {
+        UpdateStarterAudio(game);
+        return true;
     }
     bool touch = HasPlayerTouchControls();
     Vector2 inset = GameUiInset();
@@ -636,6 +700,8 @@ static bool UpdateStarter(void *state, float deltaTime)
     if (actions[ACTION_GRID].pressed) game->grid = !game->grid;
     BoundingBox playerBoxes[EDITOR_MAX_OBJECTS];
     PlayerWorld world = GetPlayerWorld(game, playerBoxes);
+    if (game->debugTools.options.noWalls) world.boxCount = 0;
+    world.disableSliding = game->debugTools.options.noSliding;
     bool escape = actions[ACTION_EXIT].pressed || game->menuButton.activated;
     bool toggleWalk = actions[ACTION_WALK].pressed || game->modeButton.activated;
     if (game->walking && (escape || toggleWalk || (!touch && !IsWindowFocused())))
@@ -742,6 +808,30 @@ static void DrawStarterTitle(const StarterGame *game)
     DrawTitleScreen(game->titlePointer, game->muted, StarterAudioAvailable(game));
 }
 
+static void DrawGameDebug(const StarterGame *game)
+{
+    InputPointer pointer = { .position = game->titlePointer };
+    if (game->campaignOpen)
+    {
+        const Campaign *c = &game->campaign;
+        const char *state = c->endlessLevel ? TextFormat("Infinite Mazes %llu  /  HP %d  Lives %d", c->stage, c->health, c->lives)
+                                           : TextFormat("Mazes %d  /  HP %d  Lives %d", c->level + 1, c->health, c->lives);
+        const char *progress = TextFormat("%s  /  Boss HP %d phase %d",
+                                         c->checkpoint ? "Checkpoint" : "Exploring", c->bossHealth, c->bossPhase + 1);
+        DrawDebugTools(&game->debugTools, pointer, &c->player, state, progress);
+    }
+    else if (game->worldOpen)
+    {
+        const WorldCampaign *c = &game->worlds;
+        DrawDebugTools(&game->debugTools, pointer, &c->player,
+                       TextFormat("Main Campaign  /  World %d", c->world + 1),
+                       TextFormat("Beacons %d/%d  /  %d chunks", c->waypoint, WAYPOINT_COUNT, WorldCampaignVisibleChunks(c)));
+    }
+    else DrawDebugTools(&game->debugTools, pointer, &game->player, "Sandbox",
+                        TextFormat("Objects %d  /  Terrain %s", game->editor.count,
+                                   game->editor.terrain.enabled ? "on" : "off"));
+}
+
 static void DrawStarter(const void *state)
 {
     const StarterGame *game = state;
@@ -753,6 +843,7 @@ static void DrawStarter(const void *state)
         DrawWorldLandscape(&game->worlds, &game->terrainLayers);
         EndMode3D();
         DrawWorldCampaignHud(&game->worlds, (InputPointer){ .position = game->titlePointer });
+        if (!game->worlds.paused && !game->worlds.complete) DrawGameDebug(game);
         return;
     }
     if (game->worldPickerOpen)
@@ -772,6 +863,8 @@ static void DrawStarter(const void *state)
         DrawCampaignWorld(&game->campaign, &game->campaignSurfaces);
         EndMode3D();
         DrawCampaignHud(&game->campaign, (InputPointer){ .position = game->titlePointer });
+        if (!game->campaign.paused && !game->campaign.cleared && !game->campaign.gameOver &&
+            game->campaign.death == CAMPAIGN_DEATH_NONE) DrawGameDebug(game);
         return;
     }
     if (game->mazesOpen)
@@ -856,6 +949,7 @@ static void DrawStarter(const void *state)
         if (touch)
         {
             DrawPlayerTouch(&game->playerTouch);
+            DrawGameDebug(game);
             return;
         }
     }
@@ -866,6 +960,7 @@ static void DrawStarter(const void *state)
                 (int)stats.drawn, (int)stats.occluded, game->occlusionEnabled ? "on" : "off",
                 !StarterAudioAvailable(game) ? "unavailable" : (game->muted ? "off" : "on")),
                 left + 8, statsY + 6, 14, statsWidth - 16, RAYWHITE);
+    if (game->walking) DrawGameDebug(game);
 }
 
 static void ShutdownStarter(void *state)

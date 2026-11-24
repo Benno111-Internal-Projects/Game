@@ -42,6 +42,15 @@ textures by elevation and slope. The textures use world coordinates so they
 line up across chunks. The Sandbox terrain editor previews the same layers. Willow Basin has trees
 that stream with its terrain chunks.
 
+### Gameplay debug tools
+
+Press **F3** on desktop or tap **Debug** on mobile during gameplay. The panel
+lets you toggle damage, wall collision, slope sliding, and the live overlay
+or teleport to a random playable location. The overlay shows mode and level
+progress, player coordinates and velocity, and whether a jump is queued.
+Mazes can continue past zero lives with debug mode active. **Exit debug mode**
+restores normal rules and gives you one life if your count is zero or lower.
+
 ### Edit and ship world updates
 
 Choose **Edit** beside a world in the campaign picker. Raise or lower terrain

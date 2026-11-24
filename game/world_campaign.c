@@ -169,8 +169,8 @@ static PlayerWorld WorldPhysics(const WorldCampaign *campaign, Vector2 position,
 {
     const WorldSpec *world = &worlds[campaign->world];
     PlayerWorld physics = { .groundHeight = GroundHeight, .groundNormal = GroundNormal,
-                            .ground = world, .boxes = boxes };
-    if (campaign->world != 0) return physics;
+                            .ground = world, .boxes = boxes, .disableSliding = campaign->debugOptions.noSliding };
+    if (campaign->world != 0 || campaign->debugOptions.noWalls) return physics;
 
     // Check neighboring chunks regardless of the render camera.
     int col = (int)(position.x / CHUNK_SIDE), row = (int)(position.y / CHUNK_SIDE);
@@ -293,6 +293,34 @@ static void UpdateChunks(WorldCampaign *campaign)
             }
             chunk->visible = true;
         }
+}
+
+void TeleportWorldRandomly(WorldCampaign *campaign)
+{
+    const WorldSpec *world = &worlds[campaign->world];
+    Vector2 destination = world->spawn;
+    for (int attempt = 0; attempt < 32; ++attempt)
+    {
+        Vector2 candidate = { (float)GetRandomValue(8, WORLD_SIDE - 8),
+                              (float)GetRandomValue(8, WORLD_SIDE - 8) };
+        if (GroundNormal(world, candidate.x, candidate.y).y < 0.72f) continue;
+        destination = candidate;
+        break;
+    }
+    BoundingBox boxes[TREE_BOXES];
+    PlayerWorld physics = WorldPhysics(campaign, destination, boxes);
+    campaign->player = SpawnPlayer(destination, &physics);
+    campaign->view.position = GetPlayerEye(&campaign->player);
+    UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
+    ResetPlayerTouch(&campaign->touch);
+    UpdateChunks(campaign);
+}
+
+int WorldCampaignVisibleChunks(const WorldCampaign *campaign)
+{
+    int count = 0;
+    for (int i = 0; i < CACHE_SIDE * CACHE_SIDE; ++i) count += campaign->chunks[i].visible;
+    return count;
 }
 
 bool OpenWorldCampaign(WorldCampaign *campaign, int level)

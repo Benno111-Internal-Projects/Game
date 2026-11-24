@@ -35,6 +35,11 @@ static Vector3 GroundNormalAt(const PlayerWorld *world, Vector3 point)
     return Vector3Normalize((Vector3){ -dx, 2 * sample, -dz });
 }
 
+static bool IsSteep(const PlayerWorld *world, Vector3 point)
+{
+    return !world->disableSliding && GroundNormalAt(world, point).y < minWalkableNormalY;
+}
+
 PlayerController SpawnPlayer(Vector2 position, const PlayerWorld *world)
 {
     PlayerController player = { .feet = { position.x, 0, position.y }, .radius = 0.30f,
@@ -54,7 +59,7 @@ PlayerController SpawnPlayer(Vector2 position, const PlayerWorld *world)
         }
         if (player.feet.y == previous) break;
     }
-    player.sliding = player.feet.y == ground && GroundNormalAt(world, player.feet).y < minWalkableNormalY;
+    player.sliding = player.feet.y == ground && IsSteep(world, player.feet);
     player.grounded = !player.sliding;
     return player;
 }
@@ -91,7 +96,7 @@ static void MoveHorizontal(PlayerController *player, const PlayerWorld *world, f
         else nextFeet.z = next;
         float nextHeight = FloorAt(world, nextFeet);
         if (nextHeight > FloorAt(world, player->feet) + 0.00001f &&
-            nextHeight >= player->feet.y - contact && GroundNormalAt(world, nextFeet).y < minWalkableNormalY)
+            nextHeight >= player->feet.y - contact && IsSteep(world, nextFeet))
             next = start;
     }
     *position = next;
@@ -123,7 +128,7 @@ static void MoveVertical(PlayerController *player, const PlayerWorld *world, flo
         {
             next = landing;
             player->velocity.y = 0;
-            player->sliding = !onBox && GroundNormalAt(world, player->feet).y < minWalkableNormalY;
+            player->sliding = !onBox && IsSteep(world, player->feet);
             player->grounded = !player->sliding;
         }
     }
@@ -147,6 +152,11 @@ void StepPlayer(PlayerController *player, const PlayerWorld *world, PlayerInput 
 {
     if (input.jumpPressed) player->jumpBuffered = true;
     if (!(dt > 0.0f)) return;
+    if (world->disableSliding && player->sliding)
+    {
+        player->sliding = false;
+        player->grounded = true;
+    }
     dt = fminf(dt, 0.1f);
     int steps = (int)ceilf(dt * 120.0f);
     float step = dt / steps;

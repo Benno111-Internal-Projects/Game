@@ -5,6 +5,7 @@
 #include "ui.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -155,10 +156,19 @@ static void ResetEncounter(Campaign *campaign)
 
 enum { COLLISION_RADIUS = 2, COLLISION_WIDTH = 2 * COLLISION_RADIUS + 1 };
 
-static PlayerWorld CampaignWorld(const LevelSpec *level, Vector3 position, BoundingBox *boxes)
+static PlayerWorld CampaignWorld(const LevelSpec *level, Vector3 position, BoundingBox *boxes, DebugOptions debug)
 {
     int count = level->colliderCount;
     memcpy(boxes, level->colliders, (size_t)count * sizeof(*boxes));
+
+    PlayerWorld world = { .groundHeight = VoidHeight, .boxes = boxes, .disableSliding = debug.noSliding };
+    if (debug.noWalls)
+    {
+        int ceilings = count - level->wallEnd;
+        memcpy(boxes + level->platformCount, boxes + level->wallEnd, (size_t)ceilings * sizeof(*boxes));
+        world.boxCount = (size_t)(level->platformCount + ceilings);
+        return world;
+    }
 
     // The player can move less than one tile in a simulation step.
     MazeRegion region = NearbyMaze(level, position, COLLISION_RADIUS);
@@ -167,7 +177,8 @@ static PlayerWorld CampaignWorld(const LevelSpec *level, Vector3 position, Bound
             if (level->maze[row * level->mazeCols + col] == '#')
                 boxes[count++] = MazeWall(level, row, col, col + 1);
 
-    return (PlayerWorld){ .groundHeight = VoidHeight, .boxes = boxes, .boxCount = (size_t)count };
+    world.boxCount = (size_t)count;
+    return world;
 }
 
 static void Respawn(Campaign *campaign)
@@ -178,7 +189,7 @@ static void Respawn(Campaign *campaign)
         ? (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f }
         : level->start;
     BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
-    PlayerWorld world = CampaignWorld(level, (Vector3){ spawn.x, 0, spawn.y }, boxes);
+    PlayerWorld world = CampaignWorld(level, (Vector3){ spawn.x, 0, spawn.y }, boxes, campaign->debugOptions);
     campaign->player = SpawnPlayer(spawn, &world);
     campaign->player.feet.y = campaign->checkpoint ? arena.max.y : level->platforms[0].max.y;
     Vector3 eye = GetPlayerEye(&campaign->player);
@@ -191,11 +202,51 @@ static void Respawn(Campaign *campaign)
     UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
 }
 
+static void PlaceDebugPlayer(Campaign *campaign, Vector2 destination, float height)
+{
+    BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
+    PlayerWorld world = CampaignWorld(CurrentLevel(campaign), (Vector3){ destination.x, height, destination.y },
+                                      boxes, campaign->debugOptions);
+    campaign->player = SpawnPlayer(destination, &world);
+    campaign->player.feet.y = height;
+    campaign->view.position = GetPlayerEye(&campaign->player);
+    UpdateWalkCamera(&campaign->camera, &campaign->view, Vector2Zero(), Vector2Zero(), 0);
+    ResetPlayerTouch(&campaign->touch);
+    TrackMazePosition(campaign);
+}
+
+void TeleportCampaignRandomly(Campaign *campaign)
+{
+    const LevelSpec *level = CurrentLevel(campaign);
+    Vector2 destination = level->start;
+    float height = level->platforms[0].max.y;
+    if (level->mazeRows)
+    {
+        int selected = -1, passages = 0;
+        int here = MazeCellAt(level, campaign->player.feet);
+        for (int i = 0; i < level->mazeRows * level->mazeCols; ++i)
+        {
+            if (i == here || (level->maze[i] != '.' && level->maze[i] != 'S')) continue;
+            if (GetRandomValue(1, ++passages) == 1) selected = i;
+        }
+        if (selected >= 0)
+            destination = CampaignMazeCellCenter(level, selected / level->mazeCols, selected % level->mazeCols);
+    }
+    else
+    {
+        BoundingBox platform = level->platforms[GetRandomValue(0, level->platformCount - 1)];
+        destination = (Vector2){ (platform.min.x + platform.max.x) * 0.5f,
+                                 (platform.min.z + platform.max.z) * 0.5f };
+        height = platform.max.y;
+    }
+    PlaceDebugPlayer(campaign, destination, height);
+}
+
 static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
-                       LevelSpec *endlessLevel, unsigned long long stage)
+                       LevelSpec *endlessLevel, unsigned long long stage, DebugOptions debugOptions)
 {
     *campaign = (Campaign){
-        .level = level, .debugRun = debugRun, .lives = lives,
+        .level = level, .debugRun = debugRun, .lives = lives, .debugOptions = debugOptions,
         .endlessLevel = endlessLevel, .stage = stage,
         .camera = { .up = { 0, 1, 0 }, .fovy = 48, .projection = CAMERA_PERSPECTIVE },
     };
@@ -206,19 +257,20 @@ static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
 void StartCampaign(Campaign *campaign, int level, bool debugRun)
 {
     if (level < 0 || level >= CAMPAIGN_LEVEL_COUNT) level = 0;
-    BeginStage(campaign, level, debugRun, MAZE_RUN_LIVES, NULL, 0);
+    BeginStage(campaign, level, debugRun, MAZE_RUN_LIVES, NULL, 0, (DebugOptions){0});
 }
 
 void StartEndlessMazes(Campaign *campaign, LevelSpec *level)
 {
-    BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1);
+    BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1, (DebugOptions){0});
 }
 
 static void LoseLife(Campaign *campaign, CampaignDeath cause)
 {
     campaign->death = cause;
     if (cause != CAMPAIGN_DEATH_NONE) campaign->health = 0;
-    if (!campaign->debugRun && --campaign->lives == 0)
+    if (campaign->lives > INT_MIN) --campaign->lives;
+    if (!campaign->debugRun && !campaign->debugOptions.enabled && campaign->lives <= 0)
     {
         campaign->gameOver = true;
         return;
@@ -288,7 +340,7 @@ static void BossAttackNow(Campaign *campaign, const BossSpec *boss)
 
 static bool DamagePlayer(Campaign *campaign, Vector3 origin, CampaignDeath cause)
 {
-    if (campaign->hitTimer > 0) return false;
+    if (campaign->debugOptions.noDamage || campaign->hitTimer > 0) return false;
     if (--campaign->health == 0)
     {
         LoseLife(campaign, cause);
@@ -432,11 +484,20 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     };
     Vector3 oldFeet = campaign->player.feet;
     BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
-    PlayerWorld world = CampaignWorld(CurrentLevel(campaign), oldFeet, boxes);
+    PlayerWorld world = CampaignWorld(CurrentLevel(campaign), oldFeet, boxes, campaign->debugOptions);
     StepPlayer(&campaign->player, &world, controls, dt);
     if (campaign->player.feet.y < -12.0f)
     {
-        LoseLife(campaign, CAMPAIGN_DEATH_FALL);
+        if (campaign->debugOptions.noDamage)
+        {
+            const LevelSpec *level = CurrentLevel(campaign);
+            BoundingBox arena = Arena(campaign);
+            if (campaign->checkpoint)
+                PlaceDebugPlayer(campaign, (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f },
+                                 arena.max.y);
+            else PlaceDebugPlayer(campaign, level->start, level->platforms[0].max.y);
+        }
+        else LoseLife(campaign, CAMPAIGN_DEATH_FALL);
         return;
     }
 
@@ -451,11 +512,11 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
         if (Vector3DistanceSqr(campaign->player.feet, portal) < 1.15f * 1.15f)
         {
             if (campaign->endlessLevel)
-                BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1);
+                BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1, campaign->debugOptions);
             else if (campaign->debugRun || campaign->level == CAMPAIGN_LEVEL_COUNT - 1)
                 campaign->cleared = true;
             else
-                BeginStage(campaign, campaign->level + 1, false, campaign->lives, NULL, 0);
+                BeginStage(campaign, campaign->level + 1, false, campaign->lives, NULL, 0, campaign->debugOptions);
             return;
         }
     }
@@ -949,7 +1010,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     if (campaign->endlessLevel)
         DrawText(TextFormat("Lives %d    %d x %d", campaign->lives, level->mazeCols, level->mazeRows),
                  96 + hudX, 31 + hudY, 13, level->trim);
-    else if (!campaign->debugRun)
+    else if (!campaign->debugRun || campaign->debugOptions.enabled)
         DrawText(TextFormat("Lives %d", campaign->lives), 96 + hudX, 31 + hudY, 13, level->trim);
     for (int i = 0; i < 3; ++i)
         DrawRectangle(18 + hudX + 23 * i, 51 + hudY, 17, 10, i < campaign->health ? level->trim : DARKGRAY);

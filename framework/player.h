@@ -13,6 +13,7 @@ typedef struct PlayerWorld {
     size_t boxCount;
     // Optional upward unit normal. The controller estimates it from heights if omitted.
     PlayerGroundNormal groundNormal;
+    bool disableSliding;
 } PlayerWorld;
 
 typedef struct PlayerController {
