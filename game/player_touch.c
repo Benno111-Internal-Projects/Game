@@ -13,7 +13,7 @@ bool HasPlayerTouchControls(void)
 
 void ResetPlayerTouch(PlayerTouch *touch)
 {
-    *touch = (PlayerTouch){ .stickId = -1, .lookId = -1, .jumpId = -1 };
+    *touch = (PlayerTouch){ .stickId = -1, .lookId = -1, .jumpId = -1, .sprintId = -1 };
 }
 
 Vector2 GameUiInset(void)
@@ -46,6 +46,14 @@ static Vector2 JumpCenter(float radius)
     return center;
 }
 
+static Vector2 SprintCenter(float radius)
+{
+    Vector2 center = JumpCenter(radius);
+    center.x -= 1.72f * radius + 18;
+    center.y += 0.28f * radius;
+    return center;
+}
+
 static Vector2 StickInput(Vector2 position, Vector2 center, float radius)
 {
     Vector2 movement = Vector2ClampValue(Vector2Scale(Vector2Subtract(position, center),
@@ -57,7 +65,7 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
 {
     PlayerTouchInput input = { 0 };
     if (!HasPlayerTouchControls()) return input;
-    bool stickHeld = false, lookHeld = false, jumpHeld = false;
+    bool stickHeld = false, lookHeld = false, jumpHeld = false, sprintHeld = false;
     float radius = ControlRadius();
     Vector2 stickCenter = StickCenter(radius);
     const InputTouch *points;
@@ -79,15 +87,17 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
             touch->lookPosition = position;
         }
         else if (id == touch->jumpId) jumpHeld = true;
+        else if (id == touch->sprintId) sprintHeld = true;
     }
     if (!stickHeld) touch->stickId = -1;
     if (!lookHeld) touch->lookId = -1;
     if (!jumpHeld) touch->jumpId = -1;
+    if (!sprintHeld) touch->sprintId = -1;
 
     for (size_t i = 0; i < count; ++i)
     {
         int id = points[i].id;
-        if (id == touch->stickId || id == touch->lookId || id == touch->jumpId) continue;
+        if (id == touch->stickId || id == touch->lookId || id == touch->jumpId || id == touch->sprintId) continue;
         Vector2 position = points[i].position;
         if (!points[i].down)
         {
@@ -105,6 +115,10 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
             touch->jumpId = id;
             input.jumpPressed = true;
         }
+        else if (CheckCollisionPointCircle(position, SprintCenter(radius), 0.72f * radius + 8))
+        {
+            if (touch->sprintId == -1) touch->sprintId = id;
+        }
         else if (touch->lookId == -1 && position.x > GetScreenWidth() * 0.4f && position.y > 80.0f + GameUiInset().y)
         {
             touch->lookId = id;
@@ -112,6 +126,7 @@ PlayerTouchInput ReadPlayerTouch(PlayerTouch *touch)
         }
     }
     touch->movement = input.movement;
+    input.sprintHeld = touch->sprintId != -1;
     return input;
 }
 
@@ -120,10 +135,15 @@ void DrawPlayerTouch(const PlayerTouch *touch)
     if (!HasPlayerTouchControls()) return;
     float radius = ControlRadius();
     Vector2 stick = StickCenter(radius), jump = JumpCenter(radius);
+    Vector2 sprint = SprintCenter(radius);
     const Color background = { 18, 32, 42, 190 };
     Vector2 thumb = Vector2Add(stick, Vector2Scale((Vector2){ touch->movement.x, -touch->movement.y }, radius * 0.63f));
     DrawCircleV(stick, radius, background);
     DrawCircleV(thumb, radius * 0.29f, RAYWHITE);
     DrawCircleV(jump, radius, touch->jumpId == -1 ? background : (Color){ 91, 123, 105, 235 });
+    DrawCircleV(sprint, radius * 0.72f, touch->sprintId == -1 ? background : (Color){ 91, 123, 105, 235 });
+    int sprintFont = (int)Clamp(radius * 0.52f, 11, 17);
+    DrawText("Sprint", (int)sprint.x - MeasureText("Sprint", sprintFont) / 2,
+             (int)sprint.y - sprintFont / 2, sprintFont, RAYWHITE);
     DrawText("Jump", (int)jump.x - MeasureText("Jump", 17) / 2, (int)jump.y - 8, 17, RAYWHITE);
 }

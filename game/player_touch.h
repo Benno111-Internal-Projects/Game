@@ -4,7 +4,7 @@
 #include "raylib.h"
 
 typedef struct PlayerTouch {
-    int stickId, lookId, jumpId;
+    int stickId, lookId, jumpId, sprintId;
     Vector2 lookPosition;
     Vector2 movement;
 } PlayerTouch;
@@ -13,6 +13,7 @@ typedef struct PlayerTouchInput {
     Vector2 movement;
     Vector2 look;
     bool jumpPressed;
+    bool sprintHeld;
 } PlayerTouchInput;
 
 bool HasPlayerTouchControls(void);

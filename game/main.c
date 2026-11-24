@@ -405,7 +405,7 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     StepCampaign(campaign, Vector2Add(movement, touchInput.movement),
                  touch ? touchInput.look : pointer.delta,
                  actions[ACTION_SPACE].pressed || touchInput.jumpPressed,
-                 actions[ACTION_SPRINT].down, actions[ACTION_RESET].pressed, deltaTime);
+                 actions[ACTION_SPRINT].down || touchInput.sprintHeld, actions[ACTION_RESET].pressed, deltaTime);
     if (!touch && campaign->death != CAMPAIGN_DEATH_NONE) EnableCursor();
 }
 
@@ -671,7 +671,8 @@ static bool UpdateStarter(void *state, float deltaTime)
         };
         movement = Vector2Add(movement, touchInput.movement);
         MoveStarterPlayer(game, &world, movement, mouse,
-            actions[ACTION_SPACE].pressed || touchInput.jumpPressed, actions[ACTION_SPRINT].down, deltaTime);
+            actions[ACTION_SPACE].pressed || touchInput.jumpPressed,
+            actions[ACTION_SPRINT].down || touchInput.sprintHeld, deltaTime);
     }
     else
     {
@@ -843,7 +844,7 @@ static void DrawStarter(const void *state)
         ? "WASD move / Space jump / Shift sprint / Mouse look / R reset / F or Esc orbit"
         : "Drag orbit / Scroll zoom / F player / Esc menu / R reset / Space shader / B sky / G grid";
     if (touch)
-        controls = game->walking ? "Move with stick / Swipe to look / Tap Jump" : "Drag to orbit / Tap Player to move";
+        controls = game->walking ? "Stick to move / Swipe to look / Hold Sprint / Tap Jump" : "Drag to orbit / Tap Player to move";
     DrawUiLabel(controls, left, 43 + top, 14, GetScreenWidth() - 2 * left, (Color){ 195, 214, 230, 255 });
     if (game->walking)
     {

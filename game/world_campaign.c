@@ -371,7 +371,7 @@ bool UpdateWorldCampaign(WorldCampaign *campaign, InputPointer pointer, Vector2 
     PlayerWorld physics = WorldPhysics(campaign, feet, boxes);
     StepPlayer(&campaign->player, &physics, (PlayerInput){
         .movement = Vector2Add(Vector2Scale(right, movement.x), Vector2Scale(forward, movement.y)),
-        .jumpPressed = jump || mobile.jumpPressed, .sprint = sprint,
+        .jumpPressed = jump || mobile.jumpPressed, .sprint = sprint || mobile.sprintHeld,
     }, Clamp(dt, 0, 0.05f));
     Vector2 position = { campaign->player.feet.x, campaign->player.feet.z };
     if (retry || position.x < 0 || position.y < 0 || position.x >= WORLD_SIDE || position.y >= WORLD_SIDE)
