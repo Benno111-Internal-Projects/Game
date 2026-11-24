@@ -786,6 +786,79 @@ static void DrawWallTorches(const LevelSpec *level, Vector3 eye, float time)
         }
 }
 
+// Test the entire box against the active clip volume, including near and far.
+static bool MazeChunkInView(BoundingBox box, Matrix clip)
+{
+    Vector3 center = Vector3Scale(Vector3Add(box.min, box.max), 0.5f);
+    Vector3 half = Vector3Subtract(box.max, center);
+    const Vector4 axes[] = {
+        { clip.m0, clip.m4, clip.m8, clip.m12 },
+        { clip.m1, clip.m5, clip.m9, clip.m13 },
+        { clip.m2, clip.m6, clip.m10, clip.m14 },
+    };
+    for (int i = 0; i < 3; ++i)
+        for (int sign = -1; sign <= 1; sign += 2)
+        {
+            Vector3 normal = { clip.m3 + sign * axes[i].x, clip.m7 + sign * axes[i].y,
+                               clip.m11 + sign * axes[i].z };
+            float distance = Vector3DotProduct(normal, center) + clip.m15 + sign * axes[i].w;
+            float radius = fabsf(normal.x) * half.x + fabsf(normal.y) * half.y + fabsf(normal.z) * half.z;
+            if (distance < -radius) return false;
+        }
+    return true;
+}
+
+static bool IsMazeStone(const LevelSpec *level, int row, int col)
+{
+    // The concealed exit renders as stone but stays traversable.
+    if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return false;
+    char tile = level->maze[row * level->mazeCols + col];
+    return tile == '#' || tile == 'E';
+}
+
+static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfaces,
+                          Texture2D lightmap, Color wall)
+{
+    enum { CHUNK_SIDE = 16 };
+    Matrix clip = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
+    Color side = ColorBrightness(wall, -0.12f);
+    rlSetTexture(surfaces->walls.id);
+    rlBegin(RL_QUADS);
+    for (int row = 0; row < level->mazeRows; row += CHUNK_SIDE)
+        for (int col = 0; col < level->mazeCols; col += CHUNK_SIDE)
+        {
+            int lastRow = (int)fminf(row + CHUNK_SIDE, level->mazeRows);
+            int lastCol = (int)fminf(col + CHUNK_SIDE, level->mazeCols);
+            BoundingBox bounds = MazeWall(level, row, col, lastCol);
+            bounds.max.z = level->platforms[0].min.z + lastRow * CAMPAIGN_MAZE_CELL;
+            if (!MazeChunkInView(bounds, clip)) continue;
+
+            for (int z = row; z < lastRow; ++z)
+                for (int x = col; x < lastCol; ++x)
+                {
+                    if (!IsMazeStone(level, z, x)) continue;
+                    bool north = !IsMazeStone(level, z - 1, x), south = !IsMazeStone(level, z + 1, x);
+                    bool west = !IsMazeStone(level, z, x - 1), east = !IsMazeStone(level, z, x + 1);
+                    int vertices = 4 * (north + south + west + east);
+                    if (!vertices) continue;
+                    // A batch flush clears secondary samplers.
+                    if (rlCheckRenderBatchLimit(vertices))
+                        SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
+                    BoundingBox box = MazeWall(level, z, x, x + 1);
+                    Vector3 lo = box.min, hi = box.max;
+                    Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
+                    Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
+                    // The continuous floor and roof cover the tops and bottoms of the walls.
+                    if (north) StoneFace(b, a, d, c, 2, -1, wall);
+                    if (south) StoneFace(e, f, g, h, 2, 1, wall);
+                    if (west) StoneFace(a, e, h, d, 0, -1, side);
+                    if (east) StoneFace(f, b, c, g, 0, 1, side);
+                }
+        }
+    rlEnd();
+    rlSetTexture(0);
+}
+
 static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces *surfaces,
                                  Vector3 eye, float time)
 {
@@ -813,31 +886,7 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
     DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
-    rlSetTexture(surfaces->walls.id);
-    rlBegin(RL_QUADS);
-    MazeRegion region = NearbyMaze(level, eye, 32);
-    for (int row = region.firstRow; row < region.lastRow; ++row)
-    {
-        const char *tiles = &level->maze[row * level->mazeCols];
-        int col = region.firstCol;
-        while (col < region.lastCol)
-        {
-            if (tiles[col] != '#' && tiles[col] != 'E')
-            {
-                ++col;
-                continue;
-            }
-            int first = col++;
-            // The exit tile looks like its neighbors and has no collider.
-            while (col < region.lastCol && (tiles[col] == '#' || tiles[col] == 'E')) ++col;
-            // Raylib clears secondary samplers whenever its immediate batch flushes.
-            if (rlCheckRenderBatchLimit(24))
-                SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
-            DrawStoneBox(MazeWall(level, row, first, col), wall);
-        }
-    }
-    rlEnd();
-    rlSetTexture(0);
+    DrawMazeWalls(level, surfaces, lightmap, wall);
     EndShaderMode();
     DrawWallTorches(level, eye, time);
 }
