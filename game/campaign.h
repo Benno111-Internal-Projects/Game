@@ -51,7 +51,7 @@ typedef struct Campaign {
     float time, attackTimer, guardTimer, hitTimer, phaseNotice, bossMotion;
     unsigned int attackCount;
     Vector3 bossPosition;
-    bool checkpoint, debugRun, cleared, paused;
+    bool checkpoint, debugRun, cleared, paused, secondMaze;
     bool mazeVisited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
 } Campaign;
 

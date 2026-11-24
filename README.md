@@ -70,8 +70,8 @@ locally.
 
 ## Mazes bonus mode
 
-Choose **Mazes** on the title screen. **Classic** has seven authored mazes and
-nine bosses. **Infinite** generates a new maze after every boss and cycles
+Choose **Mazes** on the title screen. **Classic** has seven levels with
+nine bosses and two minibosses. **Infinite** generates a new maze after every boss and cycles
 through the nine bosses. Each generated maze has an independently random
 width and height from 17 to 200 cells. The minimap follows the player in
 large mazes.
@@ -79,7 +79,7 @@ large mazes.
 Wall torches light the dark corridors and burn on contact. Find the hidden
 passage to the enclosed boss room. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
-Eight bosses change movement and attacks as they take damage. The Hollow Crown
+Several bosses change movement and attacks as they take damage. The Hollow Crown
 has three phases.
 
 Each run starts with three lives and three health points per life. Dying or
@@ -95,9 +95,9 @@ Debug level select gives unlimited retries.
 | Brook Crossing | Brook Lantern |
 | Quarry Steps | Copper Maw |
 | Windmill Ridge | Ridge Spinner, Gale Warden |
-| Lantern Marsh | Amber Tide |
+| Lantern Marsh | Marsh Wisp → second maze → Amber Tide |
 | Frost Terrace | Glacier Eye |
-| Crown Keep | Cinder Regent, The Hollow Crown |
+| Crown Keep | Crown Sentinel → second maze → Cinder Regent and The Hollow Crown |
 
 On desktop, use **WASD**, mouse look, **Space** to jump, **Left Shift** to
 sprint, **R** to spend a life and retry, and **Esc** to pause. On mobile, use the on-screen
@@ -113,7 +113,7 @@ Choose **Sandbox** to play the editable scene.
 ### Ship a level update
 
 Edit `game/assets/levels/01.level` through `07.level` in GitHub and open a pull
-request. The bundled levels use `DORF-LEVEL 2` followed by these fields in order.
+request. The levels use `DORF-LEVEL 2` or `DORF-LEVEL 3`, followed by these fields in order.
 
 | Field | Values |
 | --- | --- |
@@ -128,7 +128,9 @@ spawn, and the rest of the boundary must be walls. Each tile spans 2.5 world
 units. The arena attaches to the exit automatically. The exit tile is rendered
 as a wall that the player can walk through. Assign each of the nine boss IDs
 once across the pack. Use **Debug Level Select** to play-test changes.
-The game also loads legacy `DORF-LEVEL 1` platform layouts.
+Levels 5 and 7 use `DORF-LEVEL 3` with two consecutive `maze` blocks. The first
+maze leads to the miniboss and the second leads to the encounters listed in
+`bosses`. The game also loads legacy `DORF-LEVEL 1` platform layouts.
 
 Run `./build/benno111-engene --check-levels game/assets/levels` to validate the
 pack without opening a window. GitHub Actions validates the bundled pack on

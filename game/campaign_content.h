@@ -42,6 +42,8 @@ typedef struct LevelSpec {
 
 extern const BossSpec campaignBosses[CAMPAIGN_BOSS_COUNT];
 extern LevelSpec campaignLevels[CAMPAIGN_LEVEL_COUNT];
+extern LevelSpec campaignExtraMazes[CAMPAIGN_LEVEL_COUNT];
+extern const BossSpec campaignMinibosses[CAMPAIGN_LEVEL_COUNT];
 
 // Read and validate the complete numbered pack before replacing the active levels.
 bool LoadCampaignLevels(const char *directory);

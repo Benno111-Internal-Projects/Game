@@ -38,3 +38,13 @@ const BossSpec campaignBosses[CAMPAIGN_BOSS_COUNT] = {
         { 2.6f, 1.65f, 1.35f, { BOSS_SWEEP, BOSS_SPIRAL } },
     } },
 };
+
+const BossSpec campaignMinibosses[CAMPAIGN_LEVEL_COUNT] = {
+    [4] = { "Marsh Wisp", { 171, 239, 160, 255 }, 3, 0.62f, 0.95f, 1, {
+        { 1.65f, 0.9f, 2.05f, { BOSS_AIMED, BOSS_FAN } },
+    } },
+    [6] = { "Crown Sentinel", { 228, 169, 227, 255 }, 4, 0.72f, 1.12f, 2, {
+        { 1.25f, 1.15f, 2.05f, { BOSS_FAN, BOSS_PULSE } },
+        { 1.75f, 1.50f, 1.60f, { BOSS_CROSS, BOSS_SWEEP } },
+    } },
+};

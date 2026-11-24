@@ -9,9 +9,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool HasExtraMaze(const Campaign *campaign)
+{
+    return !campaign->endlessLevel && campaignExtraMazes[campaign->level].mazeRows > 0;
+}
+
+static bool IsMinibossMaze(const Campaign *campaign)
+{
+    return HasExtraMaze(campaign) && !campaign->secondMaze;
+}
+
 static const LevelSpec *CurrentLevel(const Campaign *campaign)
 {
-    return campaign->endlessLevel ? campaign->endlessLevel : &campaignLevels[campaign->level];
+    if (campaign->endlessLevel) return campaign->endlessLevel;
+    return campaign->secondMaze ? &campaignExtraMazes[campaign->level] : &campaignLevels[campaign->level];
 }
 
 static BoundingBox Arena(const Campaign *campaign)
@@ -22,6 +33,8 @@ static BoundingBox Arena(const Campaign *campaign)
 
 static const BossSpec *CurrentBoss(const Campaign *campaign)
 {
+    if (IsMinibossMaze(campaign))
+        return campaign->bossIndex == 0 ? &campaignMinibosses[campaign->level] : NULL;
     const LevelSpec *level = CurrentLevel(campaign);
     return campaign->bossIndex < level->bossCount
         ? &campaignBosses[level->firstBoss + campaign->bossIndex] : NULL;
@@ -243,11 +256,11 @@ void TeleportCampaignRandomly(Campaign *campaign)
 }
 
 static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
-                       LevelSpec *endlessLevel, unsigned long long stage, DebugOptions debugOptions)
+                       LevelSpec *endlessLevel, unsigned long long stage, DebugOptions debugOptions, bool secondMaze)
 {
     *campaign = (Campaign){
         .level = level, .debugRun = debugRun, .lives = lives, .debugOptions = debugOptions,
-        .endlessLevel = endlessLevel, .stage = stage,
+        .endlessLevel = endlessLevel, .stage = stage, .secondMaze = secondMaze,
         .camera = { .up = { 0, 1, 0 }, .fovy = 48, .projection = CAMERA_PERSPECTIVE },
     };
     if (endlessLevel) GenerateMazeLevel(endlessLevel, stage);
@@ -257,12 +270,12 @@ static void BeginStage(Campaign *campaign, int level, bool debugRun, int lives,
 void StartCampaign(Campaign *campaign, int level, bool debugRun)
 {
     if (level < 0 || level >= CAMPAIGN_LEVEL_COUNT) level = 0;
-    BeginStage(campaign, level, debugRun, MAZE_RUN_LIVES, NULL, 0, (DebugOptions){0});
+    BeginStage(campaign, level, debugRun, MAZE_RUN_LIVES, NULL, 0, (DebugOptions){0}, false);
 }
 
 void StartEndlessMazes(Campaign *campaign, LevelSpec *level)
 {
-    BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1, (DebugOptions){0});
+    BeginStage(campaign, 0, false, MAZE_RUN_LIVES, level, 1, (DebugOptions){0}, false);
 }
 
 static void LoseLife(Campaign *campaign, CampaignDeath cause)
@@ -512,11 +525,14 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
         if (Vector3DistanceSqr(campaign->player.feet, portal) < 1.15f * 1.15f)
         {
             if (campaign->endlessLevel)
-                BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1, campaign->debugOptions);
+                BeginStage(campaign, 0, false, campaign->lives, campaign->endlessLevel, campaign->stage + 1, campaign->debugOptions, false);
+            else if (IsMinibossMaze(campaign))
+                BeginStage(campaign, campaign->level, campaign->debugRun, campaign->lives, NULL, 0,
+                           campaign->debugOptions, true);
             else if (campaign->debugRun || campaign->level == CAMPAIGN_LEVEL_COUNT - 1)
                 campaign->cleared = true;
             else
-                BeginStage(campaign, campaign->level + 1, false, campaign->lives, NULL, 0, campaign->debugOptions);
+                BeginStage(campaign, campaign->level + 1, false, campaign->lives, NULL, 0, campaign->debugOptions, false);
             return;
         }
     }
@@ -1006,6 +1022,8 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     DrawUiPanel((Rectangle){ 0, 0, (float)width, (float)hudBottom }, panel);
     const char *heading = campaign->endlessLevel ? level->name :
         TextFormat("%d / %d   %s", campaign->level + 1, CAMPAIGN_LEVEL_COUNT, level->name);
+    if (HasExtraMaze(campaign))
+        heading = TextFormat("%s  /  Maze %d of 2", heading, campaign->secondMaze ? 2 : 1);
     DrawUiLabel(heading, 16 + hudX, 12 + hudY, 20, MenuBounds().x - 24 - hudX, RAYWHITE);
     if (campaign->endlessLevel)
         DrawText(TextFormat("Lives %d    %d x %d", campaign->lives, level->mazeCols, level->mazeRows),
@@ -1018,7 +1036,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
     const char *objective = !campaign->checkpoint ? (level->mazeRows ? "Explore the maze" : "Reach the arena")
         : boss ? TextFormat("Stomp %s  %d/%d  /  Phase %d/%d", boss->name, campaign->bossHealth, boss->health,
                             campaign->bossPhase + 1, boss->phaseCount)
-               : "Exit open";
+               : IsMinibossMaze(campaign) ? "Gate to the second maze open" : "Exit open";
     DrawUiLabel(objective, 96 + hudX, 48 + hudY, 15, width - 104 - 2 * hudX, RAYWHITE);
     bool touch = HasPlayerTouchControls();
     const char *back = (campaign->cleared || campaign->gameOver) ? (campaign->debugRun ? "Levels" : "Mazes")
@@ -1030,7 +1048,7 @@ void DrawCampaignHud(const Campaign *campaign, InputPointer pointer)
         DrawRectangle(0, hudBottom, width, height - hudBottom, (Color){ 8, 15, 24, 225 });
         const char *message = campaign->gameOver ? "Game over" : (campaign->debugRun ? "Level clear" : "Mazes complete");
         DrawText(message, (width - MeasureText(message, 33)) / 2, height / 2 - 30, 33, level->trim);
-        const char *prompt = campaign->debugRun ? "Return to level select" : "All nine bosses defeated";
+        const char *prompt = campaign->debugRun ? "Return to level select" : "All bosses defeated";
         if (campaign->gameOver)
             prompt = TextFormat("Mazes cleared %llu", campaign->endlessLevel ?
                                campaign->stage - 1 : (unsigned long long)campaign->level);

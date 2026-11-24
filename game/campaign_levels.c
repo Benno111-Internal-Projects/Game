@@ -8,6 +8,7 @@
 #include <string.h>
 
 LevelSpec campaignLevels[CAMPAIGN_LEVEL_COUNT];
+LevelSpec campaignExtraMazes[CAMPAIGN_LEVEL_COUNT];
 
 enum { AUTHORED_MAZE_SIDE = 31 };
 
@@ -145,10 +146,10 @@ static void BuildMaze(LevelSpec *level, int spawn)
     level->colliders[level->colliderCount++] = roof;
 }
 
-static bool ReadMaze(char *cursor, LevelSpec *level)
+static bool ReadMaze(char **cursor, LevelSpec *level)
 {
     float size[2];
-    if (!ReadNumbers(ReadField(&cursor, "maze"), size, 2) ||
+    if (!ReadNumbers(ReadField(cursor, "maze"), size, 2) ||
         size[0] < 7 || size[0] > AUTHORED_MAZE_SIDE || floorf(size[0]) != size[0] ||
         size[1] < 7 || size[1] > AUTHORED_MAZE_SIDE || floorf(size[1]) != size[1]) return false;
     level->mazeRows = (int)size[0];
@@ -157,7 +158,7 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
     int spawn = -1;
     for (int row = 0; row < level->mazeRows; ++row)
     {
-        const char *line = NextLine(&cursor);
+        const char *line = NextLine(cursor);
         if (!line || strlen(line) != (size_t)level->mazeCols) return false;
         for (int col = 0; col < level->mazeCols; ++col)
         {
@@ -171,7 +172,7 @@ static bool ReadMaze(char *cursor, LevelSpec *level)
             level->maze[cell] = tile;
         }
     }
-    if (*cursor || spawn < 0 || level->mazeExit < 0 || !MazeIsConnected(level, spawn)) return false;
+    if (spawn < 0 || level->mazeExit < 0 || !MazeIsConnected(level, spawn)) return false;
 
     BuildMaze(level, spawn);
     return true;
@@ -226,11 +227,12 @@ void GenerateMazeLevel(LevelSpec *level, unsigned long long stage)
     BuildMaze(level, spawn);
 }
 
-static bool ReadLevel(char *cursor, LevelSpec *level)
+static bool ReadLevel(char *cursor, LevelSpec *level, LevelSpec *extra)
 {
     const char *header = NextLine(&cursor);
     if (!header) return false;
-    bool maze = strcmp(header, "DORF-LEVEL 2") == 0;
+    bool twoMazes = strcmp(header, "DORF-LEVEL 3") == 0;
+    bool maze = twoMazes || strcmp(header, "DORF-LEVEL 2") == 0;
     if (!maze && strcmp(header, "DORF-LEVEL 1") != 0) return false;
     const char *name = ReadField(&cursor, "name");
     if (!name || !*name || strlen(name) >= sizeof(level->name)) return false;
@@ -246,7 +248,21 @@ static bool ReadLevel(char *cursor, LevelSpec *level)
 
     level->firstBoss = (int)bosses[0] - 1;
     level->bossCount = (int)bosses[1];
-    if (maze) return ReadMaze(cursor, level);
+    if (maze)
+    {
+        if (!ReadMaze(&cursor, level)) return false;
+        if (twoMazes)
+        {
+            if (!extra) return false;
+            memcpy(extra->name, level->name, sizeof(extra->name));
+            extra->stone = level->stone;
+            extra->trim = level->trim;
+            extra->firstBoss = level->firstBoss;
+            extra->bossCount = level->bossCount;
+            if (!ReadMaze(&cursor, extra)) return false;
+        }
+        return !*cursor;
+    }
     level->start = (Vector2){ start[0], start[1] };
 
     while (*cursor)
@@ -275,7 +291,7 @@ static bool ReadLevel(char *cursor, LevelSpec *level)
     return valid;
 }
 
-static bool ReadLevelPack(const char *directory, LevelSpec *levels)
+static bool ReadLevelPack(const char *directory, LevelSpec *levels, LevelSpec *extra)
 {
     unsigned int bossMask = 0;
     for (int i = 0; i < CAMPAIGN_LEVEL_COUNT; ++i)
@@ -288,7 +304,7 @@ static bool ReadLevelPack(const char *directory, LevelSpec *levels)
             return false;
         }
         char *text = LoadFileText(path);
-        bool valid = text && ReadLevel(text, &levels[i]);
+        bool valid = text && ReadLevel(text, &levels[i], campaignMinibosses[i].name ? &extra[i] : NULL);
         if (text) UnloadFileText(text);
         if (!valid)
         {
@@ -316,10 +332,15 @@ static bool ReadLevelPack(const char *directory, LevelSpec *levels)
 
 bool LoadCampaignLevels(const char *directory)
 {
-    LevelSpec *levels = calloc(CAMPAIGN_LEVEL_COUNT, sizeof(*levels));
+    LevelSpec *levels = calloc(2 * CAMPAIGN_LEVEL_COUNT, sizeof(*levels));
     if (!levels) return false;
-    bool valid = ReadLevelPack(directory, levels);
-    if (valid) memcpy(campaignLevels, levels, sizeof(campaignLevels));
+    LevelSpec *extra = levels + CAMPAIGN_LEVEL_COUNT;
+    bool valid = ReadLevelPack(directory, levels, extra);
+    if (valid)
+    {
+        memcpy(campaignLevels, levels, sizeof(campaignLevels));
+        memcpy(campaignExtraMazes, extra, sizeof(campaignExtraMazes));
+    }
     free(levels);
     return valid;
 }
