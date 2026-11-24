@@ -17,6 +17,7 @@ enum {
 
 #define CAMPAIGN_MAZE_CELL 2.5f
 #define CAMPAIGN_MAZE_HEIGHT 3.6f
+#define CAMPAIGN_ARENA_ENTRY 2.5f
 
 typedef struct LevelSpec {
     char name[64];
@@ -41,7 +42,7 @@ typedef struct CampaignSurfaces {
     const LevelSpec *litLevel;
     unsigned long long litStage;
     int litFloor;
-    int lightmapLocation, mazeSizeLocation, flickerLocation;
+    int lightmapLocation, mazeSizeLocation, flickerLocation, arenaEntryLocation;
 } CampaignSurfaces;
 
 typedef enum CampaignPauseAction {

@@ -99,7 +99,7 @@ static void AddArenaWalls(LevelSpec *level)
     float north = arena.min.z, south = arena.max.z;
     float floor = arena.max.y, ceiling = floor + 6.0f;
     const float thickness = 0.4f;
-    float sideEnd = level->mazeRows ? south - thickness : south;
+    float sideEnd = level->mazeRows ? south - CAMPAIGN_ARENA_ENTRY : south;
     BoundingBox walls[] = {
         { { left, floor, north }, { right, ceiling, north + thickness } },
         { { left, floor, north + thickness }, { left + thickness, ceiling, sideEnd } },
@@ -112,13 +112,13 @@ static void AddArenaWalls(LevelSpec *level)
     {
         float center = (left + right) * 0.5f, halfDoor = CAMPAIGN_MAZE_CELL * 0.5f;
         level->colliders[level->colliderCount++] = (BoundingBox){
-            { left, floor, south - thickness }, { center - halfDoor, ceiling, south }
+            { left, floor, sideEnd }, { center - halfDoor, ceiling, south }
         };
         level->colliders[level->colliderCount++] = (BoundingBox){
-            { center + halfDoor, floor, south - thickness }, { right, ceiling, south }
+            { center + halfDoor, floor, sideEnd }, { right, ceiling, south }
         };
         level->colliders[level->colliderCount++] = (BoundingBox){
-            { center - halfDoor, floor + CAMPAIGN_MAZE_HEIGHT, south - thickness },
+            { center - halfDoor, floor + CAMPAIGN_MAZE_HEIGHT, sideEnd },
             { center + halfDoor, ceiling, south }
         };
     }

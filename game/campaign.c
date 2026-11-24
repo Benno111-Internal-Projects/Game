@@ -141,6 +141,11 @@ static bool OnPlatform(Vector3 feet, BoundingBox box)
            fabsf(feet.y - box.max.y) <= 0.03f;
 }
 
+static float ArenaEntranceEnd(const LevelSpec *level, BoundingBox arena)
+{
+    return arena.max.z - (level->mazeRows ? CAMPAIGN_ARENA_ENTRY : 0);
+}
+
 static Vector3 GatePosition(BoundingBox arena)
 {
     return (Vector3){ (arena.min.x + arena.max.x) * 0.5f, arena.max.y, arena.min.z + 1.3f };
@@ -210,7 +215,7 @@ static void Respawn(Campaign *campaign)
     const LevelSpec *level = CurrentLevel(campaign);
     BoundingBox arena = Arena(campaign);
     Vector2 spawn = campaign->checkpoint
-        ? (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f }
+        ? (Vector2){ (arena.min.x + arena.max.x) * 0.5f, ArenaEntranceEnd(level, arena) - 0.9f }
         : level->start;
     BoundingBox boxes[CAMPAIGN_MAX_COLLIDERS + COLLISION_WIDTH * COLLISION_WIDTH];
     PlayerWorld world = CampaignWorld(level, (Vector3){ spawn.x, 0, spawn.y }, boxes, campaign->debugOptions);
@@ -560,7 +565,7 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
             const LevelSpec *level = CurrentLevel(campaign);
             BoundingBox arena = Arena(campaign);
             if (campaign->checkpoint)
-                PlaceCampaignPlayer(campaign, (Vector2){ (arena.min.x + arena.max.x) * 0.5f, arena.max.z - 0.9f },
+                PlaceCampaignPlayer(campaign, (Vector2){ (arena.min.x + arena.max.x) * 0.5f, ArenaEntranceEnd(level, arena) - 0.9f },
                                  arena.max.y);
             else PlaceCampaignPlayer(campaign, level->start, level->platforms[0].max.y);
         }
@@ -580,7 +585,8 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     }
     BoundingBox arena = Arena(campaign);
     TrackMazePosition(campaign);
-    if (!elevator && OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
+    if (!elevator && campaign->player.feet.z <= ArenaEntranceEnd(level, arena) &&
+        OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
     if (TouchTorches(campaign, level) || UpdateEncounter(campaign, oldFeet, dt)) return;
 
     if (!elevator && !CurrentBoss(campaign))
@@ -657,7 +663,8 @@ bool LoadCampaignSurfaces(CampaignSurfaces *surfaces, const char *assetDir, cons
     surfaces->lightmapLocation = GetShaderLocation(surfaces->mazeLighting, "lightmap");
     surfaces->mazeSizeLocation = GetShaderLocation(surfaces->mazeLighting, "mazeSize");
     surfaces->flickerLocation = GetShaderLocation(surfaces->mazeLighting, "flicker");
-    return surfaces->lightmapLocation >= 0 && surfaces->mazeSizeLocation >= 0 &&
+    surfaces->arenaEntryLocation = GetShaderLocation(surfaces->mazeLighting, "arenaEntry");
+    return surfaces->arenaEntryLocation >= 0 && surfaces->lightmapLocation >= 0 && surfaces->mazeSizeLocation >= 0 &&
            surfaces->flickerLocation >= 0 && IsTextureValid(surfaces->walls) &&
            IsTextureValid(surfaces->platforms) && IsTextureValid(surfaces->ceiling);
 }
@@ -689,25 +696,32 @@ static void StoneFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int axis, floa
     }
 }
 
-static void DrawStoneBox(BoundingBox box, Color tint)
+enum {
+    STONE_NORTH = 1 << 0, STONE_SOUTH = 1 << 1, STONE_WEST = 1 << 2,
+    STONE_EAST = 1 << 3, STONE_TOP = 1 << 4, STONE_BOTTOM = 1 << 5,
+    STONE_ALL = (1 << 6) - 1
+};
+
+static void DrawStoneBox(BoundingBox box, Color tint, unsigned int faces)
 {
+    if (!faces) return;
     Vector3 lo = box.min, hi = box.max;
     Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
     Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
     Color side = ColorBrightness(tint, -0.12f);
-    StoneFace(b, a, d, c, 2, -1, tint);
-    StoneFace(e, f, g, h, 2, 1, tint);
-    StoneFace(a, e, h, d, 0, -1, side);
-    StoneFace(f, b, c, g, 0, 1, side);
-    StoneFace(d, h, g, c, 1, 1, tint);
-    StoneFace(a, b, f, e, 1, -1, side);
+    if (faces & STONE_NORTH) StoneFace(b, a, d, c, 2, -1, tint);
+    if (faces & STONE_SOUTH) StoneFace(e, f, g, h, 2, 1, tint);
+    if (faces & STONE_WEST) StoneFace(a, e, h, d, 0, -1, side);
+    if (faces & STONE_EAST) StoneFace(f, b, c, g, 0, 1, side);
+    if (faces & STONE_TOP) StoneFace(d, h, g, c, 1, 1, tint);
+    if (faces & STONE_BOTTOM) StoneFace(a, b, f, e, 1, -1, side);
 }
 
 static void DrawTexturedStone(Texture2D texture, BoundingBox box, Color color)
 {
     rlSetTexture(texture.id);
     rlBegin(RL_QUADS);
-    DrawStoneBox(box, color);
+    DrawStoneBox(box, color, STONE_ALL);
     rlEnd();
     rlSetTexture(0);
 }
@@ -882,12 +896,10 @@ static bool MazeChunkInView(BoundingBox box, Matrix clip)
     return true;
 }
 
-static bool IsMazeStone(const LevelSpec *level, int row, int col, bool hideExit)
+static bool IsMazeStone(const LevelSpec *level, int row, int col)
 {
-    // The concealed exit renders as stone but stays traversable.
     if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return false;
-    char tile = level->maze[row * level->mazeCols + col];
-    return tile == '#' || (hideExit && tile == 'E');
+    return level->maze[row * level->mazeCols + col] == '#';
 }
 
 static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfaces,
@@ -895,7 +907,6 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
 {
     enum { CHUNK_SIDE = 16 };
     Matrix clip = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
-    Color side = ColorBrightness(wall, -0.12f);
     rlSetTexture(surfaces->walls.id);
     rlBegin(RL_QUADS);
     for (int row = 0; row < level->mazeRows; row += CHUNK_SIDE)
@@ -910,23 +921,20 @@ static void DrawMazeWalls(const LevelSpec *level, const CampaignSurfaces *surfac
             for (int z = row; z < lastRow; ++z)
                 for (int x = col; x < lastCol; ++x)
                 {
-                    if (!IsMazeStone(level, z, x, hideExit)) continue;
-                    bool north = !IsMazeStone(level, z - 1, x, hideExit), south = !IsMazeStone(level, z + 1, x, hideExit);
-                    bool west = !IsMazeStone(level, z, x - 1, hideExit), east = !IsMazeStone(level, z, x + 1, hideExit);
-                    int vertices = 4 * (north + south + west + east);
-                    if (!vertices) continue;
-                    // A batch flush clears secondary samplers.
-                    if (rlCheckRenderBatchLimit(vertices))
+                    unsigned int faces = 0;
+                    if (IsMazeStone(level, z, x))
+                    {
+                        if (!IsMazeStone(level, z - 1, x)) faces |= STONE_NORTH;
+                        if (!IsMazeStone(level, z + 1, x)) faces |= STONE_SOUTH;
+                        if (!IsMazeStone(level, z, x - 1)) faces |= STONE_WEST;
+                        if (!IsMazeStone(level, z, x + 1)) faces |= STONE_EAST;
+                    }
+                    else if (hideExit && z == 0 && x == level->mazeExit)
+                        faces = STONE_SOUTH; // Concealed from the maze side, open from the passage.
+                    if (!faces) continue;
+                    if (rlCheckRenderBatchLimit(16))
                         SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
-                    BoundingBox box = MazeWall(level, z, x, x + 1);
-                    Vector3 lo = box.min, hi = box.max;
-                    Vector3 a = lo, b = { hi.x, lo.y, lo.z }, c = { hi.x, hi.y, lo.z }, d = { lo.x, hi.y, lo.z };
-                    Vector3 e = { lo.x, lo.y, hi.z }, f = { hi.x, lo.y, hi.z }, g = hi, h = { lo.x, hi.y, hi.z };
-                    // The continuous floor and roof cover the tops and bottoms of the walls.
-                    if (north) StoneFace(b, a, d, c, 2, -1, wall);
-                    if (south) StoneFace(e, f, g, h, 2, 1, wall);
-                    if (west) StoneFace(a, e, h, d, 0, -1, side);
-                    if (east) StoneFace(f, b, c, g, 0, 1, side);
+                    DrawStoneBox(MazeWall(level, z, x, x + 1), wall, faces);
                 }
         }
     rlEnd();
@@ -939,30 +947,37 @@ static void DrawCampaignSurfaces(const LevelSpec *level, const CampaignSurfaces 
     Color floor = ColorLerp(level->stone, level->trim, 0.19f);
     Color wall = ColorLerp(level->stone, (Color){ 15, 24, 35, 255 }, 0.24f);
     Color ceiling = ColorBrightness(floor, -0.15f);
-    if (!elevator)
+    if (!level->mazeRows)
     {
-        int firstPlatform = level->mazeRows ? 1 : 0;
-        for (int i = firstPlatform; i < level->platformCount; ++i)
+        for (int i = 0; i < level->platformCount; ++i)
             DrawTexturedStone(surfaces->platforms, level->platforms[i], floor);
-
-        rlSetTexture(surfaces->walls.id);
-        rlBegin(RL_QUADS);
-        for (int i = level->platformCount; i < level->wallEnd; ++i) DrawStoneBox(level->colliders[i], wall);
-        rlEnd();
-        rlSetTexture(0);
+        for (int i = level->platformCount; i < level->wallEnd; ++i)
+            DrawTexturedStone(surfaces->walls, level->colliders[i], wall);
         DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+        return;
     }
-    if (!level->mazeRows) return;
 
     Vector2 dims = { (float)level->mazeCols, (float)level->mazeRows };
     float flicker = surfaces->mazeLightmap.id ? TorchFlicker(Vector3Zero(), time) : 0;
     Texture2D lightmap = surfaces->mazeLightmap.id ? surfaces->mazeLightmap : surfaces->walls;
+    float arenaEntry = elevator ? 0 : CAMPAIGN_ARENA_ENTRY / CAMPAIGN_MAZE_CELL;
     BeginShaderMode(surfaces->mazeLighting);
+    SetShaderValue(surfaces->mazeLighting, surfaces->arenaEntryLocation, &arenaEntry, SHADER_UNIFORM_FLOAT);
     SetShaderValue(surfaces->mazeLighting, surfaces->mazeSizeLocation, &dims, SHADER_UNIFORM_VEC2);
     SetShaderValue(surfaces->mazeLighting, surfaces->flickerLocation, &flicker, SHADER_UNIFORM_FLOAT);
     SetShaderValueTexture(surfaces->mazeLighting, surfaces->lightmapLocation, lightmap);
     DrawTexturedStone(surfaces->platforms, level->platforms[0], floor);
     DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd + 1], ceiling);
+    if (!elevator)
+    {
+        DrawTexturedStone(surfaces->platforms, level->platforms[1], floor);
+        DrawTexturedStone(surfaces->ceiling, level->colliders[level->wallEnd], ceiling);
+        rlSetTexture(surfaces->walls.id);
+        rlBegin(RL_QUADS);
+        for (int i = level->platformCount; i < level->wallEnd; ++i)
+            DrawStoneBox(level->colliders[i], wall, STONE_ALL);
+        rlEnd();
+    }
     DrawMazeWalls(level, surfaces, lightmap, wall, !elevator);
     EndShaderMode();
     DrawWallTorches(level, surfaces, eye, time);
