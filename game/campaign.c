@@ -643,51 +643,23 @@ static float TorchFlicker(Vector3 flame, float time)
     return 0.89f + 0.08f * sinf(time * 12.0f + flame.x) + 0.07f * sinf(time * 19.0f + flame.z);
 }
 
-enum { LIGHT_SAMPLES = 4 };
-#define TORCH_RANGE_SQUARED 28.0f
+enum {
+    LIGHT_SAMPLES = 4,
+    LIGHT_SAMPLE_COST = 10,
+    LIGHT_DIAGONAL_COST = 14,
+    LIGHT_RANGE_COST = 104,
+    LIGHT_RADIUS = LIGHT_RANGE_COST / LIGHT_SAMPLE_COST,
+    LIGHT_DIAMETER = 2 * LIGHT_RADIUS + 1,
+    LIGHT_WINDOW = LIGHT_DIAMETER * LIGHT_DIAMETER
+};
+#define LIGHT_COST_TO_WORLD (CAMPAIGN_MAZE_CELL / (LIGHT_SAMPLES * LIGHT_SAMPLE_COST))
+#define TORCH_RANGE_SQUARED ((LIGHT_RANGE_COST * LIGHT_COST_TO_WORLD) * (LIGHT_RANGE_COST * LIGHT_COST_TO_WORLD))
 
 static bool BlocksLight(const LevelSpec *level, int row, int col)
 {
     if (row < 0 || row >= level->mazeRows || col < 0 || col >= level->mazeCols) return true;
     char tile = level->maze[row * level->mazeCols + col];
     return tile == '#' || tile == 'E';
-}
-
-// Traverse exact tile boundaries and reject rays that graze a blocked corner.
-static bool TorchVisible(const LevelSpec *level, Vector2 start, Vector2 target)
-{
-    int col = (int)start.x, row = (int)start.y;
-    int lastCol = (int)target.x, lastRow = (int)target.y;
-    float dx = target.x - start.x, dz = target.y - start.y;
-    int stepX = dx < 0 ? -1 : 1, stepZ = dz < 0 ? -1 : 1;
-    float intervalX = dx == 0 ? INFINITY : 1.0f / fabsf(dx);
-    float intervalZ = dz == 0 ? INFINITY : 1.0f / fabsf(dz);
-    float nextX = dx == 0 ? INFINITY : fabsf(col + (stepX > 0) - start.x) * intervalX;
-    float nextZ = dz == 0 ? INFINITY : fabsf(row + (stepZ > 0) - start.y) * intervalZ;
-    while (col != lastCol || row != lastRow)
-    {
-        if (fabsf(nextX - nextZ) < 0.00001f)
-        {
-            if (BlocksLight(level, row, col + stepX) || BlocksLight(level, row + stepZ, col))
-                return false;
-            col += stepX;
-            row += stepZ;
-            nextX += intervalX;
-            nextZ += intervalZ;
-        }
-        else if (nextX < nextZ)
-        {
-            col += stepX;
-            nextX += intervalX;
-        }
-        else
-        {
-            row += stepZ;
-            nextZ += intervalZ;
-        }
-        if (BlocksLight(level, row, col)) return false;
-    }
-    return true;
 }
 
 static unsigned char AddTorchSample(unsigned char existing, float squaredDistance)
@@ -699,22 +671,68 @@ static unsigned char AddTorchSample(unsigned char existing, float squaredDistanc
 static void BakeTorch(const LevelSpec *level, Vector3 flame, Color *pixels, int width)
 {
     Vector2 source = MazeGridPosition(level, flame);
-    // Range is sqrt(28) world units, fewer than three maze cells.
-    MazeRegion region = NearbyMaze(level, flame, 3);
-    for (int row = region.firstRow * LIGHT_SAMPLES; row < region.lastRow * LIGHT_SAMPLES; ++row)
-        for (int col = region.firstCol * LIGHT_SAMPLES; col < region.lastCol * LIGHT_SAMPLES; ++col)
+    int sourceCol = (int)(source.x * LIGHT_SAMPLES), sourceRow = (int)(source.y * LIGHT_SAMPLES);
+    int firstCol = sourceCol - LIGHT_RADIUS, firstRow = sourceRow - LIGHT_RADIUS;
+    unsigned char cost[LIGHT_WINDOW];
+    bool open[LIGHT_WINDOW], queued[LIGHT_WINDOW] = { 0 };
+    int queue[LIGHT_WINDOW];
+    for (int y = 0; y < LIGHT_DIAMETER; ++y)
+        for (int x = 0; x < LIGHT_DIAMETER; ++x)
         {
-            if (BlocksLight(level, row / LIGHT_SAMPLES, col / LIGHT_SAMPLES)) continue;
-            Vector2 sample = { (col + 0.5f) / LIGHT_SAMPLES, (row + 0.5f) / LIGHT_SAMPLES };
-            float distance = Vector2DistanceSqr(source, sample) * CAMPAIGN_MAZE_CELL * CAMPAIGN_MAZE_CELL;
-            if (distance >= TORCH_RANGE_SQUARED || !TorchVisible(level, source, sample)) continue;
-
-            Color *pixel = &pixels[row * width + col];
-            float ceilingOffset = CAMPAIGN_MAZE_HEIGHT - flame.y;
-            pixel->r = AddTorchSample(pixel->r, distance + flame.y * flame.y);
-            pixel->g = AddTorchSample(pixel->g, distance);
-            pixel->b = AddTorchSample(pixel->b, distance + ceilingOffset * ceilingOffset);
+            int col = firstCol + x, row = firstRow + y;
+            int i = y * LIGHT_DIAMETER + x;
+            open[i] = col >= 0 && row >= 0 &&
+                      !BlocksLight(level, row / LIGHT_SAMPLES, col / LIGHT_SAMPLES);
+            cost[i] = LIGHT_RANGE_COST;
         }
+
+    int origin = LIGHT_RADIUS * LIGHT_DIAMETER + LIGHT_RADIUS;
+    if (!open[origin]) return;
+    cost[origin] = 0;
+    queued[origin] = true;
+    queue[0] = origin;
+
+    // Relax nearby samples along open passages. Diagonal moves must clear both sides.
+    int head = 0, tail = 1, pending = 1;
+    while (pending > 0)
+    {
+        int i = queue[head];
+        head = (head + 1) % LIGHT_WINDOW;
+        --pending;
+        queued[i] = false;
+        int x = i % LIGHT_DIAMETER, y = i / LIGHT_DIAMETER;
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= LIGHT_DIAMETER || ny < 0 || ny >= LIGHT_DIAMETER) continue;
+                int next = ny * LIGHT_DIAMETER + nx;
+                int distance = cost[i] + (dx && dy ? LIGHT_DIAGONAL_COST : LIGHT_SAMPLE_COST);
+                if (!open[next] || distance >= cost[next]) continue;
+                if (dx && dy && (!open[i + dx] || !open[i + dy * LIGHT_DIAMETER])) continue;
+                cost[next] = (unsigned char)distance;
+                if (!queued[next])
+                {
+                    queue[tail] = next;
+                    tail = (tail + 1) % LIGHT_WINDOW;
+                    ++pending;
+                    queued[next] = true;
+                }
+            }
+    }
+
+    float ceilingOffset = CAMPAIGN_MAZE_HEIGHT - flame.y;
+    for (int i = 0; i < LIGHT_WINDOW; ++i)
+    {
+        if (cost[i] >= LIGHT_RANGE_COST) continue;
+        int row = firstRow + i / LIGHT_DIAMETER, col = firstCol + i % LIGHT_DIAMETER;
+        Color *pixel = &pixels[row * width + col];
+        float distance = cost[i] * LIGHT_COST_TO_WORLD;
+        float squaredDistance = distance * distance;
+        pixel->r = AddTorchSample(pixel->r, squaredDistance + flame.y * flame.y);
+        pixel->g = AddTorchSample(pixel->g, squaredDistance);
+        pixel->b = AddTorchSample(pixel->b, squaredDistance + ceilingOffset * ceilingOffset);
+    }
 }
 
 void PrepareCampaignLighting(const Campaign *campaign, CampaignSurfaces *surfaces)
