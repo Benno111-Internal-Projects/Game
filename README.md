@@ -292,7 +292,7 @@ Put this project at the root of the GitHub repository so GitHub can discover
 pull requests, and manual dispatches. It uploads one artifact per platform.
 
 In **Settings → Secrets and variables → Actions** for the Game repo, add
-`FRAMEWORK_READ_TOKEN` with Contents read access to the private
+`YY` with Contents read access to the private
 `Benno111Engene` repo. All four jobs check out the revision pinned in
 `framework-revision.txt`. Fork pull requests require a trusted maintainer build
 because GitHub withholds repository secrets from fork workflows.
