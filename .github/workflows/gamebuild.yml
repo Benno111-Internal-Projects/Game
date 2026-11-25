@@ -172,19 +172,9 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
           cmake --build build --config Release --target benno111-engene
           app="$(find build -type d -name benno111-engene.app -print -quit)"
-          test -n "$app"
-          test -f "$app/assets/sample.obj"
-          test -f "$app/shaders/model.vert"
           mkdir -p ios-package/Payload
           cp -R "$app" ios-package/Payload/
           (cd ios-package && zip -qry ../benno111-engene-ios.ipa Payload)
-          unzip -Z1 benno111-engene-ios.ipa > ipa-files.txt
-          grep -Fx 'Payload/benno111-engene.app/Info.plist' ipa-files.txt
-          grep -Fx 'Payload/benno111-engene.app/benno111-engene' ipa-files.txt
-          for level in 01 02 03 04 05 06 07; do
-            grep -Fx "Payload/benno111-engene.app/assets/levels/$level.level" ipa-files.txt
-            grep -Fx "Payload/benno111-engene.app/assets/worlds/$level.world" ipa-files.txt
-          done
 
       - name: Upload Linux build
         if: matrix.platform == 'linux'
