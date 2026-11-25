@@ -1,5 +1,6 @@
 #include "campaign.h"
 #include "campaign_content.h"
+#include "maze_lan.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "ui.h"
@@ -27,7 +28,13 @@ static const LevelSpec *BaseMaze(const Campaign *campaign)
 
 static const LevelSpec *CurrentLevel(const Campaign *campaign)
 {
+    if (campaign->remoteMaze) return campaign->remoteMaze;
     return campaign->mazeFloor > 0 ? &campaign->upperMaze : BaseMaze(campaign);
+}
+
+const LevelSpec *ActiveCampaignMaze(const Campaign *campaign)
+{
+    return CurrentLevel(campaign);
 }
 
 static bool HasElevator(const Campaign *campaign)
@@ -389,20 +396,23 @@ static bool DamagePlayer(Campaign *campaign, Vector3 origin, CampaignDeath cause
     return false;
 }
 
-static bool UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt)
+static bool UpdateEncounter(Campaign *campaign, Vector3 oldFeet, float dt, bool partner)
 {
     const BossSpec *boss = CurrentBoss(campaign);
     if (!boss || !campaign->checkpoint) return false;
-    const BossPhase *phase = CurrentPhase(campaign, boss);
-    campaign->bossMotion = fmodf(campaign->bossMotion + dt * phase->speed, 2 * PI);
-    campaign->phaseNotice = fmaxf(0, campaign->phaseNotice - dt);
-    UpdateBossPosition(campaign);
-    campaign->guardTimer = fmaxf(0, campaign->guardTimer - dt);
-    campaign->attackTimer -= dt;
-    if (campaign->attackTimer <= 0)
+    if (!partner)
     {
-        BossAttackNow(campaign, boss);
-        campaign->attackTimer = phase->cooldown;
+        const BossPhase *phase = CurrentPhase(campaign, boss);
+        campaign->bossMotion = fmodf(campaign->bossMotion + dt * phase->speed, 2 * PI);
+        campaign->phaseNotice = fmaxf(0, campaign->phaseNotice - dt);
+        UpdateBossPosition(campaign);
+        campaign->guardTimer = fmaxf(0, campaign->guardTimer - dt);
+        campaign->attackTimer -= dt;
+        if (campaign->attackTimer <= 0)
+        {
+            BossAttackNow(campaign, boss);
+            campaign->attackTimer = phase->cooldown;
+        }
     }
 
     Vector3 feet = campaign->player.feet;
@@ -527,8 +537,8 @@ static void RideMazeElevator(Campaign *campaign, float dt)
     PlaceCampaignPlayer(campaign, campaign->upperMaze.start, 0);
 }
 
-void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
-                  bool sprint, bool retry, float dt)
+static void StepCampaignPlayer(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
+                               bool sprint, bool retry, float dt, bool partner)
 {
     if (campaign->cleared || campaign->gameOver || campaign->paused || campaign->death != CAMPAIGN_DEATH_NONE) return;
     dt = Clamp(dt, 0, 0.05f);
@@ -539,10 +549,10 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     }
     if (campaign->elevatorTime > 0)
     {
-        RideMazeElevator(campaign, dt);
+        if (!partner) RideMazeElevator(campaign, dt);
         return;
     }
-    campaign->time += dt;
+    if (!partner) campaign->time += dt;
     campaign->hitTimer = fmaxf(0, campaign->hitTimer - dt);
 
     campaign->view.position = GetPlayerEye(&campaign->player);
@@ -587,7 +597,7 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     TrackMazePosition(campaign);
     if (!elevator && campaign->player.feet.z <= ArenaEntranceEnd(level, arena) &&
         OnPlatform(campaign->player.feet, arena)) campaign->checkpoint = true;
-    if (TouchTorches(campaign, level) || UpdateEncounter(campaign, oldFeet, dt)) return;
+    if (TouchTorches(campaign, level) || UpdateEncounter(campaign, oldFeet, partner ? 0 : dt, partner)) return;
 
     if (!elevator && !CurrentBoss(campaign))
     {
@@ -612,6 +622,154 @@ void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
     }
     campaign->view.position = campaign->camera.position = GetPlayerEye(&campaign->player);
     campaign->camera.target = Vector3Add(campaign->camera.position, direction);
+}
+
+void StepCampaign(Campaign *campaign, Vector2 movement, Vector2 look, bool jump,
+                  bool sprint, bool retry, float dt)
+{
+    StepCampaignPlayer(campaign, movement, look, jump, sprint, retry, dt, false);
+}
+
+void ResetMazePartner(const Campaign *campaign, MazePartner *partner)
+{
+    *partner = (MazePartner){ campaign->player, campaign->view, campaign->camera,
+                              campaign->hitTimer, campaign->health, campaign->death };
+}
+
+static void SetMazePartner(Campaign *campaign, const MazePartner *partner)
+{
+    campaign->player = partner->player;
+    campaign->view = partner->view;
+    campaign->camera = partner->camera;
+    campaign->health = partner->health;
+    campaign->hitTimer = partner->hitTimer;
+    campaign->death = partner->death;
+}
+
+void StepMazePartner(Campaign *campaign, MazePartner *partner, const MazeLanInput *input, float dt)
+{
+    if (campaign->elevatorTime > 0 || campaign->paused || campaign->cleared || campaign->gameOver) return;
+    PlayerTouch hostTouch = campaign->touch;
+    MazePartner host;
+    ResetMazePartner(campaign, &host);
+    SetMazePartner(campaign, partner);
+    int level = campaign->level;
+    bool second = campaign->secondMaze;
+    unsigned long long stage = campaign->stage;
+    if (input->continueRun && campaign->death != CAMPAIGN_DEATH_NONE)
+    {
+        const LevelSpec *maze = CurrentLevel(campaign);
+        BoundingBox arena = Arena(campaign);
+        Vector2 spawn = campaign->checkpoint ?
+            (Vector2){ (arena.min.x + arena.max.x) * 0.5f, ArenaEntranceEnd(maze, arena) - 0.9f } :
+            maze->start;
+        PlaceCampaignPlayer(campaign, spawn, 0);
+        campaign->health = 3;
+        campaign->hitTimer = 0.65f;
+        campaign->death = CAMPAIGN_DEATH_NONE;
+    }
+    StepCampaignPlayer(campaign, Vector2ClampValue(input->move, 0, 1), input->look,
+                       input->jump != 0, input->sprint != 0, input->retry != 0, dt, host.death == CAMPAIGN_DEATH_NONE);
+    ResetMazePartner(campaign, partner);
+    if (stage != campaign->stage || level != campaign->level || second != campaign->secondMaze) return;
+    if (campaign->elevatorTime > 0)
+    {
+        // The player who reaches the lift brings their partner along.
+        campaign->health = host.health > 0 ? host.health : 3;
+        campaign->hitTimer = host.hitTimer;
+        campaign->death = CAMPAIGN_DEATH_NONE;
+        return;
+    }
+    SetMazePartner(campaign, &host);
+    campaign->touch = hostTouch;
+}
+
+void ExportMazeLanFrame(const Campaign *c, const MazePartner *partner, MazeLanFrame *frame)
+{
+    bool riding = c->elevatorTime > 0;
+    *frame = (MazeLanFrame){
+        .stage = (uint32_t)c->stage, .level = c->level, .floor = c->mazeFloor,
+        .flags = (c->endlessLevel ? LAN_INFINITE : 0) | (c->secondMaze ? LAN_SECOND : 0) |
+                 (c->checkpoint ? LAN_CHECKPOINT : 0) | (c->cleared ? LAN_CLEARED : 0) |
+                 (c->gameOver ? LAN_GAME_OVER : 0),
+        .lives = c->lives, .boss = c->bossIndex, .bossHealth = c->bossHealth, .bossPhase = c->bossPhase,
+        .health = riding ? c->health : partner->health, .death = riding ? 0 : partner->death,
+        .time = c->time, .elevator = c->elevatorTime, .attackTimer = c->attackTimer, .guardTimer = c->guardTimer,
+        .feet = riding ? c->player.feet : partner->player.feet,
+        .eye = riding ? c->camera.position : partner->camera.position,
+        .target = riding ? c->camera.target : partner->camera.target,
+        .hostFeet = c->player.feet, .bossPosition = c->bossPosition
+    };
+    for (int i = 0; i < CAMPAIGN_MAX_ORBS; ++i)
+    {
+        const CampaignOrb *orb = &c->orbs[i];
+        frame->orbs[i] = (Vector4){ orb->position.x, orb->position.y, orb->position.z, orb->life };
+    }
+}
+
+static bool ValidLanPosition(Vector3 v)
+{
+    return isfinite(v.x) && fabsf(v.x) < 2000 && isfinite(v.y) && fabsf(v.y) < 2000 &&
+           isfinite(v.z) && fabsf(v.z) < 2000;
+}
+
+bool ApplyMazeLanFrame(Campaign *c, LevelSpec *maze, const MazeLanFrame *frame, const MazeLanLayout *layout)
+{
+    if (frame->level >= CAMPAIGN_LEVEL_COUNT || frame->floor >= MAZE_FLOORS ||
+        frame->death > CAMPAIGN_DEATH_FALL || frame->lives > MAZE_RUN_LIVES || frame->health > 3 ||
+        frame->boss > CAMPAIGN_BOSS_COUNT || frame->bossHealth > 100 || frame->bossPhase >= 3 ||
+        !isfinite(frame->time) || !isfinite(frame->attackTimer) || !isfinite(frame->guardTimer) ||
+        !isfinite(frame->elevator) || frame->elevator < 0 || frame->elevator > ELEVATOR_RIDE_SECONDS ||
+        !ValidLanPosition(frame->feet) || !ValidLanPosition(frame->hostFeet) ||
+        !ValidLanPosition(frame->eye) || !ValidLanPosition(frame->target) || !ValidLanPosition(frame->bossPosition) ||
+        Vector3DistanceSqr(frame->eye, frame->target) < 0.01f) return false;
+    bool second = (frame->flags & LAN_SECOND) != 0;
+    bool infinite = (frame->flags & LAN_INFINITE) != 0;
+    if (infinite != (frame->stage != 0) || (second && (infinite || !campaignMinibosses[frame->level].name)))
+        return false;
+    if (layout)
+    {
+        if (layout->rows > CAMPAIGN_MAZE_SIDE || layout->cols > CAMPAIGN_MAZE_SIDE ||
+            !BuildLanMaze(maze, layout->tiles, (int)layout->rows, (int)layout->cols,
+                          (int)frame->level, frame->stage, second)) return false;
+        memset(c->mazeVisited, 0, sizeof(c->mazeVisited));
+    }
+    else if (!c->remoteMaze || c->mazeFloor != (int)frame->floor || c->level != (int)frame->level ||
+             c->stage != frame->stage || c->secondMaze != second) return false;
+
+    c->remoteMaze = maze;
+    c->endlessLevel = infinite ? maze : NULL;
+    c->mazeFloor = frame->floor;
+    c->stage = frame->stage;
+    c->level = frame->level;
+    c->secondMaze = second;
+    c->checkpoint = (frame->flags & LAN_CHECKPOINT) != 0;
+    c->cleared = (frame->flags & LAN_CLEARED) != 0;
+    c->gameOver = (frame->flags & LAN_GAME_OVER) != 0;
+    c->lives = frame->lives;
+    c->bossIndex = frame->boss;
+    c->bossHealth = frame->bossHealth;
+    c->bossPhase = frame->bossPhase;
+    c->bossPosition = frame->bossPosition;
+    c->health = frame->health;
+    c->death = (CampaignDeath)frame->death;
+    c->time = frame->time;
+    c->attackTimer = frame->attackTimer;
+    c->guardTimer = frame->guardTimer;
+    c->elevatorTime = frame->elevator;
+    c->player.feet = frame->feet;
+    c->player.radius = 0.32f;
+    c->player.height = 1.7f;
+    c->camera = (Camera3D){ frame->eye, frame->target, {0, 1, 0}, 48, CAMERA_PERSPECTIVE };
+    for (int i = 0; i < CAMPAIGN_MAX_ORBS; ++i)
+    {
+        Vector4 orb = frame->orbs[i];
+        Vector3 position = { orb.x, orb.y, orb.z };
+        c->orbs[i].position = position;
+        c->orbs[i].life = ValidLanPosition(position) && isfinite(orb.w) ? orb.w : 0;
+    }
+    TrackMazePosition(c);
+    return true;
 }
 
 static Texture2D LoadStoneTexture(int tileWidth, int tileHeight, bool stagger)

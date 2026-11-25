@@ -111,6 +111,17 @@ press **1–7** on a keyboard. Debug runs return to the picker after the stage
 ends. Level layouts are in `game/assets/levels/`. Boss behavior is in `game/campaign_content.c`.
 Choose **Sandbox** to play the editable scene.
 
+### LAN co-op
+
+Connect two devices to the same local network. On one device, open
+**Mazes → LAN co-op** and choose **Host Classic** or **Host Infinite**.
+On the other device, choose **Join by IP** and enter the IPv4 address
+shown by the host. Both players can explore, ride the elevators, and fight
+bosses. Either player can advance the run, and lives are shared.
+
+The session uses TCP port 39273. Allow local network access on iOS and
+allow the game through the host device's firewall if prompted.
+
 ### Edit a maze
 
 Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to

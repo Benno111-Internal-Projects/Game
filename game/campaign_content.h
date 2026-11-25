@@ -29,6 +29,8 @@ bool LoadCampaignLevels(const char *directory);
 void LoadCampaignMazeOverrides(void);
 typedef enum MazeSaveResult { MAZE_SAVED, MAZE_INVALID, MAZE_SAVE_ERROR } MazeSaveResult;
 MazeSaveResult SaveCampaignMazeEdit(int index, const char *first, const char *second);
+bool BuildLanMaze(LevelSpec *level, const char *tiles, int rows, int cols,
+                  int classicLevel, unsigned int stage, bool second);
 void GenerateUpperMaze(LevelSpec *floor, const LevelSpec *base, unsigned int seed);
 void GenerateMazeLevel(LevelSpec *level, unsigned long long stage);
 Vector2 CampaignMazeCellCenter(const LevelSpec *level, int row, int col);

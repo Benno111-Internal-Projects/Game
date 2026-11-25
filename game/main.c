@@ -22,6 +22,7 @@
 #include "world_campaign.h"
 #include "world_editor.h"
 #include "maze_editor.h"
+#include "maze_lan.h"
 #include "scene.h"
 #include "scene_editor.h"
 #include "scene_music.h"
@@ -134,6 +135,15 @@ typedef struct StarterGame {
     bool titleOpen, editorOpen, campaignOpen, debugOpen, mazesOpen, worldOpen, worldPickerOpen, worldEditorOpen;
     bool mazePickerOpen, mazeEditorOpen;
     Campaign campaign;
+    MazeLan *mazeLan;
+    MazePartner mazePartner;
+    MazeLanInput lanInput;
+    Vector3 lanHostFeet;
+    uint64_t lanSentLayout;
+    double lanSendAt;
+    bool lanMenu, lanJoin, lanHost, lanInfinite, lanStarted;
+    char lanAddress[16];
+    const char *lanStatus;
     DebugTools debugTools;
     WorldCampaign worlds;
     WorldEditor worldEditor;
@@ -426,6 +436,292 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     if (!touch && campaign->death != CAMPAIGN_DEATH_NONE) EnableCursor();
 }
 
+static void ReturnToLanMenu(StarterGame *game, const char *status)
+{
+    CloseMazeLan(game->mazeLan);
+    game->mazeLan = NULL;
+    game->campaignOpen = game->lanStarted = game->lanJoin = false;
+    game->lanMenu = true;
+    game->lanStatus = status;
+    if (!HasPlayerTouchControls()) EnableCursor();
+}
+
+static Rectangle LanBounds(void)
+{
+    Vector2 inset = GameUiInset();
+    float width = fminf(400, GetScreenWidth() - 2 * inset.x - 24);
+    float height = fminf(360, GetScreenHeight() - 2 * inset.y - 12);
+    return (Rectangle){ (GetScreenWidth() - width) * .5f, (GetScreenHeight() - height) * .5f, width, height };
+}
+
+static Rectangle LanButton(int index)
+{
+    Rectangle panel = LanBounds();
+    float unit = panel.height / 9;
+    return (Rectangle){ panel.x + 18, panel.y + (index + 2) * unit, panel.width - 36, unit - 4 };
+}
+
+static Rectangle LanKey(int index)
+{
+    Rectangle row = LanButton(1 + index / 3);
+    float width = row.width / 3;
+    return (Rectangle){ row.x + index % 3 * width, row.y, width - 4, row.height };
+}
+
+static bool LanPressed(Rectangle bounds, InputPointer pointer)
+{
+    return ReadUiButton(bounds, pointer, true).activated;
+}
+
+static void StartLanConnection(StarterGame *game, bool host, bool infinite)
+{
+    game->mazeLan = OpenMazeLan(host, game->lanAddress);
+    game->lanHost = host;
+    game->lanInfinite = infinite;
+    game->lanStarted = false;
+    game->lanSentLayout = UINT64_MAX;
+    game->lanSendAt = 0;
+    game->lanInput = (MazeLanInput){0};
+    game->lanStatus = game->mazeLan ? NULL : host ? "Could not listen on port 39273." : "Enter a valid IPv4 address.";
+    if (game->mazeLan && !host)
+    {
+        memset(&game->campaign, 0, sizeof(game->campaign));
+        game->campaignSurfaces.litLevel = NULL;
+    }
+}
+
+static bool ReadLanFrame(StarterGame *game)
+{
+    MazeLanFrame frame;
+    MazeLanLayout layout;
+    bool changed;
+    if (!ReceiveMazeLanFrame(game->mazeLan, &frame, &layout, &changed)) return true;
+    if (!ApplyMazeLanFrame(&game->campaign, &game->endlessLevel, &frame, changed ? &layout : NULL)) return false;
+    if (changed) game->campaignSurfaces.litLevel = NULL;
+    game->lanHostFeet = frame.hostFeet;
+    return true;
+}
+
+static void ReadLanMenu(StarterGame *game, InputPointer pointer, bool escape, bool enter)
+{
+    if (game->mazeLan)
+    {
+        if (escape || LanPressed(LanButton(4), pointer))
+        {
+            ReturnToLanMenu(game, NULL);
+            return;
+        }
+        PollMazeLan(game->mazeLan);
+        if (MazeLanFailed(game->mazeLan))
+        {
+            ReturnToLanMenu(game, "Connection failed. Check the host address and Wi-Fi.");
+            return;
+        }
+        if (!MazeLanReady(game->mazeLan)) return;
+        if (game->lanHost)
+        {
+            OpenCampaign(game, 0, false, game->lanInfinite);
+            ResetMazePartner(&game->campaign, &game->mazePartner);
+        }
+        else
+        {
+            MazeLanInput empty = {0};
+            SendMazeLanInput(game->mazeLan, &empty);
+            if (!ReadLanFrame(game))
+            {
+                ReturnToLanMenu(game, "The host sent an unsupported maze.");
+                return;
+            }
+            if (!game->campaign.remoteMaze) return;
+            game->campaignOpen = true;
+            if (!HasPlayerTouchControls()) DisableCursor();
+        }
+        game->lanStarted = true;
+        game->lanMenu = false;
+        return;
+    }
+    if (game->lanJoin)
+    {
+        static const char keys[] = "123456789.0<";
+        size_t length = strlen(game->lanAddress);
+        int key;
+        while ((key = GetCharPressed()) != 0)
+            if (((key >= '0' && key <= '9') || key == '.') && length < 15)
+            {
+                game->lanAddress[length++] = (char)key;
+                game->lanAddress[length] = '\0';
+            }
+        bool erase = IsKeyPressed(KEY_BACKSPACE);
+        for (int i = 0; i < 12; ++i)
+            if (LanPressed(LanKey(i), pointer))
+            {
+                if (i == 11) erase = true;
+                else if (length < 15)
+                {
+                    game->lanAddress[length++] = keys[i];
+                    game->lanAddress[length] = '\0';
+                }
+            }
+        if (erase && length) game->lanAddress[--length] = '\0';
+        if (enter || LanPressed(LanButton(5), pointer)) StartLanConnection(game, false, false);
+        if (escape || LanPressed(LanButton(6), pointer)) { game->lanJoin = false; game->lanStatus = NULL; }
+        return;
+    }
+    if (escape || LanPressed(LanButton(4), pointer))
+    {
+        game->lanMenu = false;
+        game->mazesOpen = true;
+    }
+    else if (LanPressed(LanButton(0), pointer)) StartLanConnection(game, true, false);
+    else if (LanPressed(LanButton(1), pointer)) StartLanConnection(game, true, true);
+    else if (LanPressed(LanButton(2), pointer))
+    {
+        game->lanJoin = true;
+        game->lanStatus = NULL;
+    }
+}
+
+static void DrawLanButton(Rectangle rect, const char *label, InputPointer pointer)
+{
+    DrawUiButton(rect, label, ReadUiButton(rect, pointer, true), true);
+}
+
+static void DrawLanMenu(const StarterGame *game)
+{
+    Rectangle panel = LanBounds();
+    InputPointer pointer = { .position = game->titlePointer };
+    DrawUiPanel(panel, (Color){ 15, 24, 35, 255 });
+    DrawUiLabel("LAN co-op", panel.x + 18, panel.y + 8, 26, panel.width - 36, RAYWHITE);
+    if (game->mazeLan)
+    {
+        const char *label = game->lanHost ? "Waiting for a partner" : "Connecting to host";
+        DrawUiLabel(label, panel.x + 18, LanButton(0).y, 19, panel.width - 36, RAYWHITE);
+        DrawUiLabel(TextFormat("%s:%d", MazeLanAddress(game->mazeLan), MAZE_LAN_PORT),
+                    panel.x + 18, LanButton(1).y, 17, panel.width - 36, GOLD);
+        DrawLanButton(LanButton(4), "Cancel", pointer);
+    }
+    else if (game->lanJoin)
+    {
+        DrawUiLabel(game->lanAddress[0] ? game->lanAddress : "Host IPv4 address",
+                    panel.x + 18, LanButton(0).y - 8, 17, panel.width - 36, GOLD);
+        const char *keys[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "Delete" };
+        for (int i = 0; i < 12; ++i) DrawLanButton(LanKey(i), keys[i], pointer);
+        DrawLanButton(LanButton(5), "Connect", pointer);
+        DrawLanButton(LanButton(6), "Back", pointer);
+        if (game->lanStatus)
+            DrawUiLabel(game->lanStatus, panel.x + 18, LanButton(0).y + 11, 12, panel.width - 36, RAYWHITE);
+    }
+    else
+    {
+        DrawLanButton(LanButton(0), "Host Classic", pointer);
+        DrawLanButton(LanButton(1), "Host Infinite", pointer);
+        DrawLanButton(LanButton(2), "Join by IP", pointer);
+        DrawLanButton(LanButton(4), "Back", pointer);
+        DrawUiLabel(game->lanStatus ? game->lanStatus : "Both devices must be on the same local network.",
+                    panel.x + 18, LanButton(3).y + 5, 14, panel.width - 36, RAYWHITE);
+    }
+}
+
+static uint64_t LanLayoutId(const Campaign *campaign)
+{
+    return (campaign->stage << 8) | (unsigned int)(campaign->level << 3) |
+           (unsigned int)(campaign->mazeFloor << 1) | campaign->secondMaze;
+}
+
+static void UpdateLanHost(StarterGame *game, const InputAction *actions, InputPointer pointer, float dt)
+{
+    Campaign *campaign = &game->campaign;
+    if (!ActiveCampaignMaze(campaign)->mazeRows)
+    {
+        ReturnToLanMenu(game, "LAN co-op requires a maze layout.");
+        return;
+    }
+    uint64_t before = LanLayoutId(campaign);
+    UpdateCampaignMode(game, actions, pointer, dt);
+    if (!game->campaignOpen)
+    {
+        game->mazesOpen = false;
+        ReturnToLanMenu(game, NULL);
+        return;
+    }
+    MazeLanInput input;
+    if (before != LanLayoutId(campaign)) ResetMazePartner(campaign, &game->mazePartner);
+    else if (ReceiveMazeLanInput(game->mazeLan, &input))
+        StepMazePartner(campaign, &game->mazePartner, &input, dt);
+
+    uint64_t id = LanLayoutId(campaign);
+    double now = GetTime();
+    if (now < game->lanSendAt && id == game->lanSentLayout) return;
+    MazeLanFrame frame;
+    ExportMazeLanFrame(campaign, &game->mazePartner, &frame);
+    MazeLanLayout layout;
+    bool changed = id != game->lanSentLayout;
+    if (changed)
+    {
+        const LevelSpec *maze = ActiveCampaignMaze(campaign);
+        layout.rows = maze->mazeRows;
+        layout.cols = maze->mazeCols;
+        memcpy(layout.tiles, maze->maze, sizeof(layout.tiles));
+    }
+    if (SendMazeLanFrame(game->mazeLan, &frame, changed ? &layout : NULL))
+    {
+        game->lanSentLayout = id;
+        game->lanSendAt = now + 1.0 / 30;
+    }
+}
+
+static void UpdateLanGuest(StarterGame *game, const InputAction *actions, InputPointer pointer)
+{
+    if (!ReadLanFrame(game))
+    {
+        ReturnToLanMenu(game, "The host sent an unsupported maze.");
+        return;
+    }
+    Campaign *c = &game->campaign;
+    bool touch = HasPlayerTouchControls();
+    bool exit = actions[ACTION_EXIT].pressed || (touch && ReadCampaignMenu(pointer));
+    bool enter = actions[ACTION_START].pressed;
+    bool deathContinue = c->death != CAMPAIGN_DEATH_NONE && ReadCampaignContinue(pointer);
+    CampaignPauseAction pause = c->paused ? ReadCampaignPause(pointer) : CAMPAIGN_PAUSE_NONE;
+    if (pause == CAMPAIGN_PAUSE_LEAVE || ((c->cleared || c->gameOver) && (exit || enter || deathContinue)))
+    {
+        ReturnToLanMenu(game, NULL);
+        return;
+    }
+    MazeLanInput *input = &game->lanInput;
+    input->move = (Vector2){0};
+    input->sprint = 0;
+    if (c->death != CAMPAIGN_DEATH_NONE)
+    {
+        if (!touch) EnableCursor();
+        if (enter || deathContinue) input->continueRun = 1;
+    }
+    else if (c->paused || exit)
+    {
+        if (exit || pause == CAMPAIGN_PAUSE_RESUME || pause == CAMPAIGN_PAUSE_RETRY)
+        {
+            c->paused = !c->paused;
+            if (!touch) { if (c->paused) EnableCursor(); else DisableCursor(); }
+            ResetPlayerTouch(&c->touch);
+        }
+        if (pause == CAMPAIGN_PAUSE_RETRY) input->retry = 1;
+    }
+    else if (!c->gameOver && !c->cleared)
+    {
+        if (!touch && !IsCursorHidden()) DisableCursor();
+        PlayerTouchInput controls = ReadPlayerTouch(&c->touch);
+        input->move = Vector2Add(controls.movement, (Vector2){
+            actions[ACTION_RIGHT].down - actions[ACTION_LEFT].down,
+            actions[ACTION_FORWARD].down - actions[ACTION_BACK].down });
+        input->look = Vector2Add(input->look, touch ? controls.look : pointer.delta);
+        input->jump |= actions[ACTION_SPACE].pressed || controls.jumpPressed;
+        input->sprint = actions[ACTION_SPRINT].down || controls.sprintHeld;
+        input->retry |= actions[ACTION_RESET].pressed;
+    }
+    double now = GetTime();
+    if (now >= game->lanSendAt && SendMazeLanInput(game->mazeLan, input)) game->lanSendAt = now + 1.0 / 30;
+}
+
 static bool HandleGameDebug(StarterGame *game, PlayerTouch *touch, InputPointer pointer, bool escape)
 {
     bool wasOpen = game->debugTools.open;
@@ -550,6 +846,24 @@ static bool UpdateStarter(void *state, float deltaTime)
         UpdateStarterAudio(game);
         return true;
     }
+    if (game->lanMenu)
+    {
+        game->titlePointer = pointer.position;
+        ReadLanMenu(game, pointer, actions[ACTION_EXIT].pressed, actions[ACTION_START].pressed);
+        UpdateStarterAudio(game);
+        return true;
+    }
+    if (game->lanStarted)
+    {
+        game->titlePointer = pointer.position;
+        PollMazeLan(game->mazeLan);
+        if (MazeLanFailed(game->mazeLan)) ReturnToLanMenu(game, "Partner disconnected.");
+        else if (game->lanHost) UpdateLanHost(game, actions, pointer, deltaTime);
+        else UpdateLanGuest(game, actions, pointer);
+        if (game->campaignOpen) PrepareCampaignLighting(&game->campaign, &game->campaignSurfaces);
+        UpdateStarterAudio(game);
+        return true;
+    }
     if (game->campaignOpen)
     {
         game->titlePointer = pointer.position;
@@ -610,6 +924,12 @@ static bool UpdateStarter(void *state, float deltaTime)
         {
             game->mazesOpen = false;
             game->titleOpen = true;
+        }
+        else if (choice == MAZES_LAN)
+        {
+            game->mazesOpen = false;
+            game->lanMenu = true;
+            game->lanStatus = NULL;
         }
         else if (choice == MAZES_EDIT)
         {
@@ -912,15 +1232,30 @@ static void DrawStarter(const void *state)
         DrawWorldEditor(&game->worldEditor, (InputPointer){ .position = game->titlePointer });
         return;
     }
+    if (game->lanMenu)
+    {
+        DrawLanMenu(game);
+        return;
+    }
     if (game->campaignOpen)
     {
         BeginMode3D(game->campaign.camera);
         DrawSky(game->sky, game->campaign.camera.position);
         DrawCampaignWorld(&game->campaign, &game->campaignSurfaces);
+        if (game->lanStarted && !game->campaign.elevatorTime)
+        {
+            Vector3 feet = game->lanHost ? game->mazePartner.player.feet : game->lanHostFeet;
+            if (Vector3DistanceSqr(feet, game->campaign.player.feet) > 0.5f)
+            {
+                feet.y += 0.82f;
+                DrawModelEx(game->campaignSurfaces.sphere, feet, (Vector3){0, 1, 0}, 0,
+                            (Vector3){0.33f, 0.82f, 0.33f}, (Color){187, 224, 153, 255});
+            }
+        }
         EndMode3D();
         DrawCampaignHud(&game->campaign, (InputPointer){ .position = game->titlePointer });
         if (!game->campaign.paused && !game->campaign.cleared && !game->campaign.gameOver &&
-            game->campaign.death == CAMPAIGN_DEATH_NONE) DrawGameDebug(game);
+            game->campaign.death == CAMPAIGN_DEATH_NONE && !game->lanStarted) DrawGameDebug(game);
         return;
     }
     if (game->mazePickerOpen)
@@ -1029,6 +1364,7 @@ static void DrawStarter(const void *state)
 static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
+    CloseMazeLan(game->mazeLan);
     CloseWorldCampaign(&game->worlds);
     CloseWorldEditor(&game->worldEditor);
     UnloadWorldLevels();

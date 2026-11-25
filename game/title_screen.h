@@ -15,7 +15,7 @@ typedef enum TitleAction {
 } TitleAction;
 
 typedef enum MazesAction {
-    MAZES_NONE, MAZES_CLASSIC, MAZES_INFINITE, MAZES_EDIT, MAZES_BACK
+    MAZES_NONE, MAZES_CLASSIC, MAZES_INFINITE, MAZES_EDIT, MAZES_LAN, MAZES_BACK
 } MazesAction;
 
 MazesAction ReadMazesMenu(InputPointer pointer);

@@ -146,6 +146,40 @@ static void BuildMaze(LevelSpec *level, int spawn)
     level->colliders[level->colliderCount++] = roof;
 }
 
+bool BuildLanMaze(LevelSpec *level, const char *tiles, int rows, int cols,
+                  int classicLevel, unsigned int stage, bool second)
+{
+    if (rows < 7 || cols < 7 || rows > CAMPAIGN_MAZE_SIDE || cols > CAMPAIGN_MAZE_SIDE ||
+        classicLevel < 0 || classicLevel >= CAMPAIGN_LEVEL_COUNT) return false;
+    int spawn = -1, exit = -1;
+    for (int row = 0; row < rows; ++row)
+        for (int col = 0; col < cols; ++col)
+        {
+            int i = row * cols + col;
+            char tile = tiles[i];
+            bool border = row == 0 || row == rows - 1 || col == 0 || col == cols - 1;
+            if (tile == 'S' && !border && spawn == -1) spawn = i;
+            else if (tile == 'E' && row == 0 && col > 0 && col < cols - 1 && exit == -1) exit = col;
+            else if (tile != '#' && (tile != '.' || border)) return false;
+        }
+    if (spawn < 0 || exit < 0) return false;
+
+    const LevelSpec *base = stage ? &campaignLevels[(stage - 1) % CAMPAIGN_LEVEL_COUNT] :
+        second ? &campaignExtraMazes[classicLevel] : &campaignLevels[classicLevel];
+    *level = (LevelSpec){ .stone = base->stone, .trim = base->trim,
+                           .mazeRows = rows, .mazeCols = cols, .mazeExit = exit };
+    if (stage)
+    {
+        snprintf(level->name, sizeof(level->name), "Infinite maze %u", stage);
+        level->firstBoss = (stage - 1) % CAMPAIGN_BOSS_COUNT;
+        level->bossCount = 1;
+    }
+    else memcpy(level->name, base->name, sizeof(level->name));
+    memcpy(level->maze, tiles, (size_t)rows * cols);
+    BuildMaze(level, spawn);
+    return true;
+}
+
 static bool ReadMaze(char **cursor, LevelSpec *level)
 {
     float size[2];

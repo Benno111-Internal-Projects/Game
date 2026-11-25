@@ -1,6 +1,6 @@
 set(game_sources
     main.c title_screen.c scene_editor.c player_touch.c campaign.c campaign_content.c campaign_levels.c
-    user_content.c debug_tools.c maze_editor.c world_campaign.c world_levels.c world_editor.c
+    user_content.c debug_tools.c maze_editor.c maze_lan.c world_campaign.c world_levels.c world_editor.c
 )
 
 if(ANDROID)
@@ -24,6 +24,9 @@ else()
     add_executable(benno111-engene ${game_sources})
 endif()
 target_link_libraries(benno111-engene PRIVATE render-framework)
+if(WIN32)
+    target_link_libraries(benno111-engene PRIVATE ws2_32)
+endif()
 
 if(NOT ANDROID)
     set_target_properties(benno111-engene PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")

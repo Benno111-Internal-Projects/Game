@@ -64,6 +64,7 @@ enum { MAZE_RUN_LIVES = 3 };
 
 typedef struct Campaign {
     LevelSpec *endlessLevel;
+    const LevelSpec *remoteMaze;
     LevelSpec upperMaze;
     int mazeFloor;
     unsigned int mazeSeed;
@@ -85,6 +86,25 @@ typedef struct Campaign {
     bool checkpoint, debugRun, cleared, paused, secondMaze, editorPlaytest;
     bool mazeVisited[CAMPAIGN_MAZE_SIDE * CAMPAIGN_MAZE_SIDE];
 } Campaign;
+
+typedef struct MazePartner {
+    PlayerController player;
+    WalkCamera view;
+    Camera3D camera;
+    float hitTimer;
+    int health;
+    CampaignDeath death;
+} MazePartner;
+
+struct MazeLanFrame;
+struct MazeLanLayout;
+struct MazeLanInput;
+const LevelSpec *ActiveCampaignMaze(const Campaign *campaign);
+void ResetMazePartner(const Campaign *campaign, MazePartner *partner);
+void StepMazePartner(Campaign *campaign, MazePartner *partner, const struct MazeLanInput *input, float dt);
+void ExportMazeLanFrame(const Campaign *campaign, const MazePartner *partner, struct MazeLanFrame *frame);
+bool ApplyMazeLanFrame(Campaign *campaign, LevelSpec *maze, const struct MazeLanFrame *frame,
+                       const struct MazeLanLayout *layout);
 
 void StartCampaign(Campaign *campaign, int level, bool debugRun);
 void StartEndlessMazes(Campaign *campaign, LevelSpec *level);
