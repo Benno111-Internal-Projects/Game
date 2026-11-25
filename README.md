@@ -89,7 +89,9 @@ Wall torches light the dark corridors and burn on contact. Each maze has three
 floors, numbered from top to bottom. Gold tiles mark elevators and blue tiles mark
 stairs. Walk across either tile normally, or stand on it and press a destination
 number on desktop or tap a floor button on mobile. Elevators reach any floor
-and stairs reach adjacent floors. Each floor has a hidden passage to the boss
+and stairs reach adjacent floors. On stairs, use **W** or push the movement
+stick forward to walk along the steps. Release to stop, or move backward to
+return to the floor you started on. Each floor has a hidden passage to the boss
 room, so changing floors is optional. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
 Several bosses change movement and attacks as they take damage. The Hollow Crown
@@ -138,10 +140,30 @@ On iOS, allow local network access when prompted. If the host does not appear
 in the list, try **Join by IP**. Guest Wi-Fi isolation and firewalls can block
 connections between devices.
 
+### Dedicated maze server
+
+On a Windows or Linux machine, run the game executable with one of these flags.
+The process runs in the terminal and stays up when players leave.
+
+```sh
+./benno111-engene --maze-server classic
+./benno111-engene --maze-server infinite
+```
+
+On Windows, use `benno111-engene.exe`. Up to eight players can join through
+**Mazes → LAN co-op → Find games** or **Join by IP** using the address printed by
+the server. The server uses TCP 39273 for play and UDP 39273 for discovery.
+Players can use the same maze layout while exploring different floors. You can
+see other players on your current floor and stage. Lives, checkpoints, bosses
+and stage progress are tracked per player. If a player leaves, the other
+players continue. Rejoining starts a new run for that player.
+
 ### Two desktop windows
 
 Launch the game twice with `--window left` and `--window right` to place the
-instances on opposite sides of the monitor.
+instances on opposite sides of the monitor. Click inside the playing window to
+capture mouse look and movement. **Tab** releases the cursor, as does switching
+focus to the other window. Click again when you want to resume controls.
 
 ```powershell
 Start-Process .\benno111-engene.exe -ArgumentList '--window', 'left'
