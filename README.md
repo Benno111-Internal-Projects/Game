@@ -204,16 +204,14 @@ screen for manual entry.
 
 ### Edit a maze
 
-Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to
-paint walls and passages, or use the spawn and exit tools. **Edit second
-maze** switches layouts in levels 5 and 7. The editor sets the first-floor
-layouts. The game generates the two upper floors for each maze. **Save update**
-checks that every
-passage connects to the spawn and exit, then applies the edit locally.
-**Check routes** shows the shortest spawn-to-exit route in blue and
-unreachable passage tiles in red. The preview updates as you edit.
-**Play saved** opens the saved level with unlimited retries and returns to
-the editor when you leave.
+Choose **Mazes → Edit mazes** and select a Classic level. Use **Floor 1**,
+**Floor 2**, and **Floor 3** to open each layout. Levels 5 and 7 also have a
+**Maze 2** button for the maze after the miniboss. Drag or swipe to paint walls
+and passages, or use **Stairs** and **Elevator** to place one of each per floor.
+Travel lands on the matching tile on the destination floor, wherever you place
+it. **Save update** validates and saves all floors. **Check routes** shows the
+shortest spawn-to-exit path in blue and unreachable passages in red.
+**Play saved** opens the selected maze and floor with unlimited retries.
 
 The save path appears in the game log. To share a local edit through the
 level pack, copy `maze-05.level` (or the matching number) to
@@ -223,13 +221,14 @@ level on startup.
 ### Ship a level update
 
 Edit `game/assets/levels/01.level` through `07.level` in GitHub and open a pull
-request. The levels use `DORF-LEVEL 2` or `DORF-LEVEL 3`, followed by these fields in order.
+request. Maze packs support `DORF-LEVEL 2`, `DORF-LEVEL 3`, and `DORF-LEVEL 4`, followed by these fields in order.
 
 | Field | Values |
 | --- | --- |
 | `name` | The level name shown in the HUD and debug selector |
 | `stone`, `trim` | Three RGB integers from 0 to 255 |
 | `bosses` | First boss ID (1–9) and number of consecutive bosses (1–2) |
+| `parts` | Version 4 only. Number of maze sections, either 1 or 2 |
 | `maze` | Row count and column count, each from 7 to 31, followed by the grid |
 
 Use `#` for walls, `.` for passages, `S` for one interior spawn, and `E` for one
@@ -240,7 +239,10 @@ as a wall that the player can walk through. Assign each of the nine boss IDs
 once across the pack. Use **Debug Level Select** to play-test changes.
 Levels 5 and 7 use `DORF-LEVEL 3` with two consecutive `maze` blocks. The first
 maze leads to the miniboss and the second leads to the encounters listed in
-`bosses`. The game also loads legacy `DORF-LEVEL 1` platform layouts.
+`bosses`. Version 4 stores three consecutive floor grids per maze section
+and requires one interior `L` (elevator) and one interior `T` (stairs) per grid.
+The game generates floors 2 and 3 for older maze packs and also loads
+legacy `DORF-LEVEL 1` platform layouts.
 
 Run `./build/benno111-engene --check-levels .deps/game-main/game/assets/levels` to validate the
 pack without opening a window. GitHub Actions validates the bundled pack on
