@@ -135,6 +135,20 @@ On iOS, allow local network access when prompted. If the host does not appear
 in the list, try **Join by IP**. Guest Wi-Fi isolation and firewalls can block
 connections between devices.
 
+### Internet co-op
+
+Open **Mazes → Internet co-op**. The host chooses **Host Classic** or
+**Host Infinite**. The partner chooses **Join by IP** and enters the host's
+reachable IPv4 or IPv6 address. Use `[IPv6]:port` to specify a port with IPv6.
+An address without a port uses TCP 39273.
+
+The two games connect directly. For public IPv6, allow incoming TCP 39273
+on the host's firewall. For IPv4 behind a router, forward TCP 39273 to the
+host and share the router's public IPv4 address. A private VPN address also
+works if both players can reach it. Carrier-grade NAT and restrictive
+networks can prevent direct connections. Internet co-op has no relay or
+automatic port forwarding.
+
 ### Edit a maze
 
 Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to
