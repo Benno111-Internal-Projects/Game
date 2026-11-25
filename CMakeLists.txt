@@ -12,4 +12,10 @@ if(NOT EXISTS "${BENNO111_FRAMEWORK_ROOT}/framework/CMakeLists.txt")
 endif()
 
 add_subdirectory("${BENNO111_FRAMEWORK_ROOT}/framework" "${CMAKE_CURRENT_BINARY_DIR}/framework")
-add_subdirectory(game)
+set(BENNO111_GAME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.deps/game-main" CACHE PATH
+    "Path to the standalone game-main repository")
+if(NOT EXISTS "${BENNO111_GAME_ROOT}/game/CMakeLists.txt")
+    message(FATAL_ERROR "Clone game-main into .deps/game-main or set BENNO111_GAME_ROOT. See README.md.")
+endif()
+
+add_subdirectory("${BENNO111_GAME_ROOT}/game" "${CMAKE_CURRENT_BINARY_DIR}/game")

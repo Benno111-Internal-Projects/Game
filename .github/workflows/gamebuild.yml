@@ -30,30 +30,41 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read framework revision
-        id: framework
+      - name: Read source revisions
+        id: sources
         shell: bash
         env:
           YY: ${{ secrets.YY }}
         run: |
-          revision="$(tr -d '\r\n' < framework-revision.txt)"
-          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::framework-revision.txt must contain a full commit SHA."
-            exit 1
-          fi
+          for source in framework game; do
+            revision="$(tr -d '\r\n' < "$source-revision.txt")"
+            if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::$source-revision.txt must contain a full commit SHA."
+              exit 1
+            fi
+            echo "$source=$revision" >> "$GITHUB_OUTPUT"
+          done
           if [[ -z "$YY" ]]; then
             echo "::error::Set the YY Actions secret to a token with read access to Benno111Engene."
             exit 1
           fi
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
       - name: Download Benno111Engene
         uses: actions/checkout@v4
         with:
           repository: Benno111-Internal-Projects/Benno111Engene
-          ref: ${{ steps.framework.outputs.revision }}
+          ref: ${{ steps.sources.outputs.framework }}
           token: ${{ secrets.YY }}
           path: .deps/Benno111Engene
+          persist-credentials: false
+
+      - name: Download game-main
+        uses: actions/checkout@v4
+        with:
+          repository: Benno111-Internal-Projects/game-main
+          ref: ${{ steps.sources.outputs.game }}
+          token: ${{ secrets.GAME_READ_TOKEN || secrets.YY }}
+          path: .deps/game-main
           persist-credentials: false
 
       - name: Install Linux build dependencies
@@ -188,7 +199,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dorfplatformer-level-pack
-          path: game/assets/levels/*.level
+          path: .deps/game-main/game/assets/levels/*.level
           if-no-files-found: error
 
       - name: Upload main campaign world pack
@@ -196,7 +207,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dorfplatformer-world-pack
-          path: game/assets/worlds/*.world
+          path: .deps/game-main/game/assets/worlds/*.world
           if-no-files-found: error
 
       - name: Upload Windows build

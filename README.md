@@ -2,7 +2,7 @@
 
 A first-person 3D platformer built on benno111 engene and raylib.
 
-- `game/` contains the campaign, editor, runtime assets, and shaders.
+- The campaign, editor, assets, and shaders live in [game-main](https://github.com/Benno111-Internal-Projects/game-main/tree/main/game) under `game/`. `game-revision.txt` pins the version used by this build.
 - The reusable `render-framework` library comes from [Benno111Engene](https://github.com/Benno111-Internal-Projects/Benno111Engene). `framework-revision.txt` pins the version used by this game.
 
 Set `GAME_CODENAME` in `game/game.h` to change the window title and in-game heading, then rebuild.
@@ -11,13 +11,16 @@ Set `GAME_CODENAME` in `game/game.h` to change the window title and in-game head
 
 Use CMake 3.20+ and a C compiler. CMake uses installed raylib 5.5 when available or fetches the pinned source. A Linux source build needs the raylib/GLFW development dependencies for X11 and OpenGL.
 
-Clone the private framework repo with an account that has read access, then
-check out the pinned revision. Use `-DBENNO111_FRAMEWORK_ROOT=/path/to/Benno111Engene`
-if you already have that revision checked out elsewhere.
+Clone both private source repos with an account that has read access, then
+check out their pinned revisions. For desktop builds, you can point CMake at
+existing checkouts with `BENNO111_FRAMEWORK_ROOT` and `BENNO111_GAME_ROOT`.
+Android packaging uses the default checkout paths shown below.
 
 ```sh
 gh repo clone Benno111-Internal-Projects/Benno111Engene .deps/Benno111Engene
 git -C .deps/Benno111Engene checkout --detach "$(cat framework-revision.txt)"
+gh repo clone Benno111-Internal-Projects/game-main .deps/game-main
+git -C .deps/game-main checkout --detach "$(cat game-revision.txt)"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ./build/benno111-engene
@@ -71,7 +74,7 @@ save path. Desktop installations can replace their files in `assets/worlds/`
 and restart. Mobile builds receive bundled changes with the next app package.
 GitHub Actions validates the world's text format and publishes the seven
 files as **dorfplatformer-world-pack**. Run
-`./build/benno111-engene --check-worlds game/assets/worlds` to check the pack
+`./build/benno111-engene --check-worlds .deps/game-main/game/assets/worlds` to check the pack
 locally.
 
 ## Mazes bonus mode
@@ -170,7 +173,7 @@ Levels 5 and 7 use `DORF-LEVEL 3` with two consecutive `maze` blocks. The first
 maze leads to the miniboss and the second leads to the encounters listed in
 `bosses`. The game also loads legacy `DORF-LEVEL 1` platform layouts.
 
-Run `./build/benno111-engene --check-levels game/assets/levels` to validate the
+Run `./build/benno111-engene --check-levels .deps/game-main/game/assets/levels` to validate the
 pack without opening a window. GitHub Actions validates the bundled pack on
 Linux and Windows, checks that all seven files are in the mobile packages,
 and uploads a separate **dorfplatformer-level-pack** artifact. To update an
@@ -293,9 +296,12 @@ pull requests, and manual dispatches. It uploads one artifact per platform.
 
 In **Settings → Secrets and variables → Actions** for the Game repo, add
 `YY` with Contents read access to the private
-`Benno111Engene` repo. All four jobs check out the revision pinned in
-`framework-revision.txt`. Fork pull requests require a trusted maintainer build
-because GitHub withholds repository secrets from fork workflows.
+`Benno111Engene` repo. For `game-main`, grant the same token Contents read
+access or add a separate `GAME_READ_TOKEN` secret with that access.
+All four jobs check out the commits pinned in `framework-revision.txt` and
+`game-revision.txt`. To publish a game update, commit it in `game-main` and
+update `game-revision.txt` here. Fork pull requests require a trusted
+maintainer build because GitHub withholds repository secrets from forks.
 
 | Platform | Artifact |
 | --- | --- |

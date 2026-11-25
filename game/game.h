@@ -1,7 +1,0 @@
-#ifndef BENNO111_ENGENE_GAME_H
-#define BENNO111_ENGENE_GAME_H
-
-#define GAME_CODENAME "project 3D"
-#define GAME_WINDOW_TITLE GAME_CODENAME
-
-#endif

@@ -29,7 +29,7 @@ android {
 
     sourceSets {
         main {
-            assets.srcDirs = ['../game/assets', '../game/shaders/es']
+            assets.srcDirs = ['../.deps/game-main/game/assets', '../.deps/game-main/game/shaders/es']
         }
     }
 }
