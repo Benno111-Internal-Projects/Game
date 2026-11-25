@@ -86,10 +86,11 @@ width and height from 17 to 200 cells. The minimap follows the player in
 large mazes.
 
 Wall torches light the dark corridors and burn on contact. Each maze has three
-floors. Walk to the gold elevator to choose any floor. The stairs connect
-adjacent floors in either direction. Press the destination number on
-desktop or use the floor buttons on mobile. The hidden passage to the
-boss room is on floor 3. Land on a boss from above
+floors, numbered from top to bottom. Gold tiles mark elevators and blue tiles mark
+stairs. Walk across either tile normally, or stand on it and press a destination
+number on desktop or tap a floor button on mobile. Elevators reach any floor
+and stairs reach adjacent floors. Each floor has a hidden passage to the boss
+room, so changing floors is optional. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
 Several bosses change movement and attacks as they take damage. The Hollow Crown
 has three phases.
