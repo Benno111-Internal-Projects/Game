@@ -89,8 +89,17 @@ jobs:
         run: |
           cmake -S . -B build -A x64
           cmake --build build --config Release --parallel
-          ./build/Release/benno111-engene.exe --check-levels
-          ./build/Release/benno111-engene.exe --check-worlds
+          $cli = './build/Release/benno111-engene-cli.exe'
+          if (Test-Path $cli) {
+            $exe = [IO.File]::ReadAllBytes((Resolve-Path './build/Release/benno111-engene.exe').Path)
+            $subsystem = [BitConverter]::ToUInt16($exe, [BitConverter]::ToInt32($exe, 60) + 92)
+            if ($subsystem -ne 2) { throw 'The game executable must use the Windows GUI subsystem.' }
+          } else {
+            $cli = './build/Release/benno111-engene.exe'
+          }
+          & $cli --check-levels
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $cli --check-worlds
 
       - name: Package and test Linux installer
         if: matrix.platform == 'linux'
@@ -120,7 +129,12 @@ jobs:
           $installed = Join-Path $env:LOCALAPPDATA 'benno111-engene'
           $install = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Setup failed: $($install.ExitCode)" }
-          & (Join-Path $installed 'benno111-engene.exe') --help
+          $cliName = if (Test-Path './build/Release/benno111-engene-cli.exe') {
+            'benno111-engene-cli.exe'
+          } else {
+            'benno111-engene.exe'
+          }
+          & (Join-Path $installed $cliName) --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ((Get-FileHash LICENSE).Hash -ne (Get-FileHash (Join-Path $installed 'LICENSE')).Hash) {
             throw 'The installed license differs from the repository license.'
@@ -208,7 +222,7 @@ jobs:
         with:
           name: benno111-engene-windows
           path: |
-            .deps/game-main/build/Release/benno111-engene.exe
+            .deps/game-main/build/Release/benno111-engene*.exe
             .deps/game-main/build/Release/assets/
             .deps/game-main/build/Release/shaders/
           if-no-files-found: error
