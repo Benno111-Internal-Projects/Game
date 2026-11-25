@@ -21,15 +21,95 @@ typedef int LanSocklen;
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/select.h>
 typedef int LanSocket;
 typedef socklen_t LanSocklen;
 #define BAD_SOCKET (-1)
 #define CloseSocket close
 #endif
 
+#ifdef BENNO_IOS
+#include <dns_sd.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
+
+static bool denied;
+#ifdef BENNO_IOS
+static DNSServiceRef permissionBrowser;
+static bool permissionChecked;
+
+static void DNSSD_API PermissionResult(DNSServiceRef ref, DNSServiceFlags flags, uint32_t interfaceIndex,
+                                      DNSServiceErrorType error, const char *name, const char *type,
+                                      const char *domain, void *context)
+{
+    (void)ref; (void)flags; (void)interfaceIndex; (void)name; (void)type; (void)domain; (void)context;
+    if (error == kDNSServiceErr_PolicyDenied) denied = true;
+}
+#endif
+
+bool MazeLanAccessDenied(void)
+{
+#ifdef BENNO_IOS
+    if (!permissionChecked && !denied)
+    {
+        permissionChecked = true;
+        DNSServiceErrorType error = DNSServiceBrowse(&permissionBrowser, 0, 0, "_project3d._tcp",
+                                                     "local.", PermissionResult, NULL);
+        if (error == kDNSServiceErr_PolicyDenied) denied = true;
+    }
+    if (permissionBrowser && !denied)
+    {
+        int fd = DNSServiceRefSockFD(permissionBrowser);
+        if (fd >= 0 && fd < FD_SETSIZE)
+        {
+            fd_set ready;
+            FD_ZERO(&ready);
+            FD_SET(fd, &ready);
+            struct timeval immediate = {0};
+            if (select(fd + 1, &ready, NULL, NULL, &immediate) > 0)
+            {
+                DNSServiceErrorType error = DNSServiceProcessResult(permissionBrowser);
+                if (error == kDNSServiceErr_PolicyDenied) denied = true;
+            }
+        }
+    }
+#endif
+    return denied;
+}
+
+void ResetMazeLanPermissionCheck(void)
+{
+#ifdef BENNO_IOS
+    if (permissionBrowser) DNSServiceRefDeallocate(permissionBrowser);
+    permissionBrowser = NULL;
+    permissionChecked = false;
+#endif
+    denied = false;
+}
+
+static void RecordSocketError(int error)
+{
+#ifdef _WIN32
+    if (error == WSAEACCES) denied = true;
+#else
+    if (error == EACCES || error == EPERM) denied = true;
+#endif
+}
+
+static void RecordLastSocketError(void)
+{
+#ifdef _WIN32
+    RecordSocketError(WSAGetLastError());
+#else
+    RecordSocketError(errno);
+#endif
+}
+
 enum { LAN_MAGIC = 0x33444d01, MAX_PACKET = 8 + sizeof(MazeLanFrame) + sizeof(MazeLanLayout) };
 struct MazeLan {
-    LanSocket listener, peer;
+    LanSocket listener, peer, advertisement;
+    bool infinite;
     bool host, connected, failed, receivedInput, receivedFrame, receivedLayout;
     char address[MAZE_LAN_ADDRESS_CAPACITY];
     double opened, lastReceive;
@@ -66,6 +146,24 @@ static bool Nonblocking(LanSocket fd)
 
 static void FindAddress(char address[16])
 {
+#ifdef BENNO_IOS
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) == 0)
+    {
+        bool found = false;
+        for (struct ifaddrs *it = interfaces; it; it = it->ifa_next)
+            if (it->ifa_addr && it->ifa_addr->sa_family == AF_INET &&
+                (it->ifa_flags & IFF_UP) && strcmp(it->ifa_name, "en0") == 0)
+            {
+                const struct sockaddr_in *wifi = (const struct sockaddr_in *)it->ifa_addr;
+                found = inet_ntop(AF_INET, &wifi->sin_addr, address, 16) != NULL;
+                if (found) break;
+            }
+        freeifaddrs(interfaces);
+        if (found) return;
+    }
+    strcpy(address, "127.0.0.1");
+#else
     strcpy(address, "127.0.0.1");
     LanSocket probe = socket(AF_INET, SOCK_DGRAM, 0);
     if (probe == BAD_SOCKET) return;
@@ -81,6 +179,7 @@ static void FindAddress(char address[16])
             inet_ntop(AF_INET, &route.sin_addr, address, 16);
     }
     CloseSocket(probe);
+#endif
 }
 
 static bool ParseEndpoint(const char *address, struct sockaddr_in *endpoint)
@@ -123,7 +222,7 @@ MazeLan *OpenMazeLan(bool host, const char *address)
         return NULL;
     }
 #endif
-    lan->listener = lan->peer = BAD_SOCKET;
+    lan->listener = lan->peer = lan->advertisement = BAD_SOCKET;
     lan->host = host;
     lan->opened = GetTime();
     LanSocket fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -132,14 +231,18 @@ MazeLan *OpenMazeLan(bool host, const char *address)
     struct sockaddr_in endpoint = {0};
     endpoint.sin_family = AF_INET;
     endpoint.sin_port = htons(MAZE_LAN_PORT);
-    if (fd == BAD_SOCKET || !Nonblocking(fd)) goto failed;
+    if (fd == BAD_SOCKET || !Nonblocking(fd)) { RecordLastSocketError(); goto failed; }
     if (host)
     {
 #ifndef _WIN32
         int reuse = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #endif
-        if (bind(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 || listen(fd, 1) != 0) goto failed;
+        if (bind(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 || listen(fd, 1) != 0)
+        {
+            RecordLastSocketError();
+            goto failed;
+        }
         char ip[16];
         FindAddress(ip);
         snprintf(lan->address, sizeof(lan->address), "%s:%d", ip, MAZE_LAN_PORT);
@@ -150,7 +253,11 @@ MazeLan *OpenMazeLan(bool host, const char *address)
         char ip[16];
         if (!inet_ntop(AF_INET, &endpoint.sin_addr, ip, sizeof(ip))) goto failed;
         snprintf(lan->address, sizeof(lan->address), "%s:%u", ip, (unsigned int)ntohs(endpoint.sin_port));
-        if (connect(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 && !WouldBlock()) goto failed;
+        if (connect(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 && !WouldBlock())
+        {
+            RecordLastSocketError();
+            goto failed;
+        }
     }
     return lan;
 
@@ -164,10 +271,187 @@ void CloseMazeLan(MazeLan *lan)
     if (!lan) return;
     if (lan->peer != BAD_SOCKET) CloseSocket(lan->peer);
     if (lan->listener != BAD_SOCKET) CloseSocket(lan->listener);
+    if (lan->advertisement != BAD_SOCKET) CloseSocket(lan->advertisement);
 #ifdef _WIN32
     WSACleanup();
 #endif
     free(lan);
+}
+
+// Discovery uses a separate UDP socket so probes never occupy the co-op slot.
+enum { DISCOVER_QUERY = 0x33444d11, DISCOVER_CLASSIC = 0x33444d12, DISCOVER_INFINITE = 0x33444d13 };
+
+typedef struct NearbyMazeGame {
+    MazeLanGame game;
+    double lastSeen;
+} NearbyMazeGame;
+
+struct MazeLanDiscovery {
+    LanSocket socket;
+    uint32_t subnet;
+    unsigned int next;
+    double resumeAt;
+    bool broadcast;
+    NearbyMazeGame games[MAZE_LAN_GAMES];
+};
+
+bool AdvertiseMazeLan(MazeLan *lan, bool infinite)
+{
+    if (!lan || !lan->host) return false;
+    lan->infinite = infinite;
+    LanSocket fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd == BAD_SOCKET) { RecordLastSocketError(); return false; }
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(MAZE_LAN_PORT);
+    if (!Nonblocking(fd) || bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0)
+    {
+        RecordLastSocketError();
+        CloseSocket(fd);
+        return false;
+    }
+    lan->advertisement = fd;
+    return true;
+}
+
+static void ReplyToDiscovery(const MazeLan *lan)
+{
+    if (lan->advertisement == BAD_SOCKET) return;
+    for (int i = 0; i < 16; ++i)
+    {
+        unsigned char data[5];
+        struct sockaddr_in sender;
+        LanSocklen size = sizeof(sender);
+        int bytes = recvfrom(lan->advertisement, (char *)data, sizeof(data), 0,
+                             (struct sockaddr *)&sender, &size);
+        if (bytes < 0) break;
+        uint32_t message;
+        if (bytes != sizeof(message)) continue;
+        memcpy(&message, data, sizeof(message));
+        if (ntohl(message) != DISCOVER_QUERY) continue;
+        message = htonl(lan->infinite ? DISCOVER_INFINITE : DISCOVER_CLASSIC);
+        sendto(lan->advertisement, (const char *)&message, sizeof(message), 0,
+               (struct sockaddr *)&sender, size);
+    }
+}
+
+MazeLanDiscovery *OpenMazeLanDiscovery(void)
+{
+    MazeLanDiscovery *discovery = calloc(1, sizeof(*discovery));
+    if (!discovery) return NULL;
+#ifdef _WIN32
+    WSADATA data;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { free(discovery); return NULL; }
+#endif
+    discovery->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (discovery->socket == BAD_SOCKET || !Nonblocking(discovery->socket))
+    {
+        RecordLastSocketError();
+        CloseMazeLanDiscovery(discovery);
+        return NULL;
+    }
+#ifndef BENNO_IOS
+    int enabled = 1;
+    discovery->broadcast = setsockopt(discovery->socket, SOL_SOCKET, SO_BROADCAST,
+                                      (const char *)&enabled, sizeof(enabled)) == 0;
+#endif
+    char ip[16];
+    FindAddress(ip);
+    struct in_addr local;
+    if (inet_pton(AF_INET, ip, &local) == 1)
+    {
+        uint32_t address = ntohl(local.s_addr);
+        if ((address >> 24) == 10 || (address >> 24) == 127 || (address >> 20) == 0xac1 ||
+            (address >> 16) == 0xc0a8 || (address >> 16) == 0xa9fe)
+            discovery->subnet = address & 0xffffff00u;
+    }
+    discovery->next = 1;
+    return discovery;
+}
+
+void CloseMazeLanDiscovery(MazeLanDiscovery *discovery)
+{
+    if (!discovery) return;
+    if (discovery->socket != BAD_SOCKET) CloseSocket(discovery->socket);
+#ifdef _WIN32
+    WSACleanup();
+#endif
+    free(discovery);
+}
+
+static void SendDiscoveryQuery(const MazeLanDiscovery *discovery, uint32_t address)
+{
+    struct sockaddr_in target = {0};
+    target.sin_family = AF_INET;
+    target.sin_addr.s_addr = htonl(address);
+    target.sin_port = htons(MAZE_LAN_PORT);
+    const uint32_t message = htonl(DISCOVER_QUERY);
+    if (sendto(discovery->socket, (const char *)&message, sizeof(message), 0,
+               (struct sockaddr *)&target, sizeof(target)) < 0 && !WouldBlock()) RecordLastSocketError();
+}
+
+void PollMazeLanDiscovery(MazeLanDiscovery *discovery)
+{
+    double now = GetTime();
+    for (int i = 0; i < MAZE_LAN_GAMES; ++i)
+        if (now - discovery->games[i].lastSeen > 8) discovery->games[i].game.address[0] = 0;
+
+    if (now >= discovery->resumeAt)
+    {
+        if (discovery->next == 1)
+        {
+#ifndef BENNO_IOS
+            if (discovery->broadcast) SendDiscoveryQuery(discovery, INADDR_BROADCAST);
+#endif
+            if (discovery->subnet == 0x7f000000u) SendDiscoveryQuery(discovery, INADDR_LOOPBACK);
+        }
+        // A bounded unicast sweep also works on iOS without the multicast entitlement.
+        for (int i = 0; i < 8 && discovery->next < 255 && !denied; ++i)
+            if (discovery->subnet) SendDiscoveryQuery(discovery, discovery->subnet | discovery->next++);
+            else discovery->next = 255;
+        if (discovery->next == 255)
+        {
+            discovery->next = 1;
+            discovery->resumeAt = now + 1.5;
+        }
+        else discovery->resumeAt = now + 0.025;
+    }
+
+    for (int i = 0; i < 16; ++i)
+    {
+        unsigned char data[5];
+        struct sockaddr_in sender;
+        LanSocklen size = sizeof(sender);
+        int bytes = recvfrom(discovery->socket, (char *)data, sizeof(data), 0,
+                             (struct sockaddr *)&sender, &size);
+        if (bytes < 0) break;
+        uint32_t message;
+        if (bytes != sizeof(message) || ntohs(sender.sin_port) != MAZE_LAN_PORT) continue;
+        memcpy(&message, data, sizeof(message));
+        message = ntohl(message);
+        if (message != DISCOVER_CLASSIC && message != DISCOVER_INFINITE) continue;
+        MazeLanGame game = { .infinite = message == DISCOVER_INFINITE };
+        char ip[16];
+        if (!inet_ntop(AF_INET, &sender.sin_addr, ip, sizeof(ip))) continue;
+        snprintf(game.address, sizeof(game.address), "%s:%u", ip, (unsigned int)ntohs(sender.sin_port));
+        int slot = -1;
+        for (int j = 0; j < MAZE_LAN_GAMES; ++j)
+        {
+            const char *listed = discovery->games[j].game.address;
+            if (strcmp(listed, game.address) == 0) { slot = j; break; }
+            if (!*listed && slot < 0) slot = j;
+        }
+        if (slot >= 0) discovery->games[slot] = (NearbyMazeGame){ game, now };
+    }
+}
+
+int ListMazeLanGames(const MazeLanDiscovery *discovery, MazeLanGame games[MAZE_LAN_GAMES])
+{
+    int count = 0;
+    if (discovery)
+        for (int i = 0; i < MAZE_LAN_GAMES; ++i)
+            if (discovery->games[i].game.address[0]) games[count++] = discovery->games[i].game;
+    return count;
 }
 
 const char *MazeLanAddress(const MazeLan *lan) { return lan->address; }
@@ -221,11 +505,22 @@ void PollMazeLan(MazeLan *lan)
     {
         if (lan->host)
         {
+            ReplyToDiscovery(lan);
             lan->peer = accept(lan->listener, NULL, NULL);
-            if (lan->peer == BAD_SOCKET) { lan->failed = !WouldBlock(); return; }
+            if (lan->peer == BAD_SOCKET)
+            {
+                lan->failed = !WouldBlock();
+                if (lan->failed) RecordLastSocketError();
+                return;
+            }
             if (!Nonblocking(lan->peer)) { lan->failed = true; return; }
             CloseSocket(lan->listener);
             lan->listener = BAD_SOCKET;
+            if (lan->advertisement != BAD_SOCKET)
+            {
+                CloseSocket(lan->advertisement);
+                lan->advertisement = BAD_SOCKET;
+            }
         }
         else
         {
@@ -236,6 +531,7 @@ void PollMazeLan(MazeLan *lan)
                 int error = 0;
                 size = sizeof(error);
                 getsockopt(lan->peer, SOL_SOCKET, SO_ERROR, (char *)&error, &size);
+                RecordSocketError(error);
                 lan->failed = error != 0 || GetTime() - lan->opened > 8;
                 return;
             }
@@ -252,11 +548,21 @@ void PollMazeLan(MazeLan *lan)
 #endif
         int n = send(lan->peer, (const char *)lan->out + lan->sent, lan->sendSize - lan->sent, flags);
         if (n > 0) lan->sent += n;
-        else if (n == 0 || !WouldBlock()) { lan->failed = true; return; }
+        else if (n == 0 || !WouldBlock())
+        {
+            if (n < 0) RecordLastSocketError();
+            lan->failed = true;
+            return;
+        }
     }
 
     int n = recv(lan->peer, (char *)lan->in + lan->readSize, MAX_PACKET - lan->readSize, 0);
-    if (n == 0 || (n < 0 && !WouldBlock())) { lan->failed = true; return; }
+    if (n == 0 || (n < 0 && !WouldBlock()))
+    {
+        if (n < 0) RecordLastSocketError();
+        lan->failed = true;
+        return;
+    }
     if (n > 0)
     {
         lan->lastReceive = GetTime();

@@ -16,6 +16,10 @@
     <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleVersion</key>
     <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_project3d._tcp</string>
+    </array>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect to another project 3D player on your local network.</string>
     <key>UILaunchScreen</key>

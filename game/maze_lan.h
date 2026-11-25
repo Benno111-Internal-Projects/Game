@@ -6,6 +6,20 @@
 
 enum { MAZE_LAN_PORT = 39273, MAZE_LAN_ADDRESS_CAPACITY = 22 };
 typedef struct MazeLan MazeLan;
+typedef struct MazeLanDiscovery MazeLanDiscovery;
+enum { MAZE_LAN_GAMES = 4 };
+typedef struct MazeLanGame {
+    char address[MAZE_LAN_ADDRESS_CAPACITY];
+    bool infinite;
+} MazeLanGame;
+
+bool AdvertiseMazeLan(MazeLan *lan, bool infinite);
+MazeLanDiscovery *OpenMazeLanDiscovery(void);
+void CloseMazeLanDiscovery(MazeLanDiscovery *discovery);
+void PollMazeLanDiscovery(MazeLanDiscovery *discovery);
+int ListMazeLanGames(const MazeLanDiscovery *discovery, MazeLanGame games[MAZE_LAN_GAMES]);
+bool MazeLanAccessDenied(void);
+void ResetMazeLanPermissionCheck(void);
 // Wire payloads use 32-bit integers and floats on the supported little-endian targets.
 typedef struct MazeLanInput {
     Vector2 move, look;

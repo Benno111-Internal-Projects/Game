@@ -136,6 +136,8 @@ typedef struct StarterGame {
     bool mazePickerOpen, mazeEditorOpen;
     Campaign campaign;
     MazeLan *mazeLan;
+    MazeLanDiscovery *lanDiscovery;
+    bool lanAdvertised;
     MazePartner mazePartner;
     MazeLanInput lanInput;
     Vector3 lanHostFeet;
@@ -436,10 +438,20 @@ static void UpdateCampaignMode(StarterGame *game, const InputAction *actions,
     if (!touch && campaign->death != CAMPAIGN_DEATH_NONE) EnableCursor();
 }
 
+static const char lanPermissionMessage[] = "Local network access blocked. Check system settings or firewall.";
+
+static void StopLanDiscovery(StarterGame *game)
+{
+    CloseMazeLanDiscovery(game->lanDiscovery);
+    game->lanDiscovery = NULL;
+}
+
 static void ReturnToLanMenu(StarterGame *game, const char *status)
 {
     CloseMazeLan(game->mazeLan);
     game->mazeLan = NULL;
+    StopLanDiscovery(game);
+    ResetMazeLanPermissionCheck();
     game->campaignOpen = game->lanStarted = game->lanJoin = false;
     game->lanMenu = true;
     game->lanStatus = status;
@@ -483,7 +495,11 @@ static bool LanPressed(Rectangle bounds, InputPointer pointer)
 
 static void StartLanConnection(StarterGame *game, bool host, bool infinite)
 {
+    StopLanDiscovery(game);
+    ResetMazeLanPermissionCheck();
+    MazeLanAccessDenied();
     game->mazeLan = OpenMazeLan(host, game->lanAddress);
+    game->lanAdvertised = host && AdvertiseMazeLan(game->mazeLan, infinite);
     game->lanHost = host;
     game->lanInfinite = infinite;
     game->lanStarted = false;
@@ -491,6 +507,11 @@ static void StartLanConnection(StarterGame *game, bool host, bool infinite)
     game->lanSendAt = 0;
     game->lanInput = (MazeLanInput){0};
     game->lanStatus = game->mazeLan ? NULL : host ? "Could not listen on port 39273." : "Check the IPv4 address and port.";
+    if (MazeLanAccessDenied())
+    {
+        ReturnToLanMenu(game, lanPermissionMessage);
+        return;
+    }
     if (game->mazeLan && !host)
     {
         memset(&game->campaign, 0, sizeof(game->campaign));
@@ -520,6 +541,11 @@ static void ReadLanMenu(StarterGame *game, InputPointer pointer, bool escape, bo
             return;
         }
         PollMazeLan(game->mazeLan);
+        if (MazeLanAccessDenied())
+        {
+            ReturnToLanMenu(game, lanPermissionMessage);
+            return;
+        }
         if (MazeLanFailed(game->mazeLan))
         {
             ReturnToLanMenu(game, "Connection failed. Check the host address and Wi-Fi.");
@@ -546,6 +572,31 @@ static void ReadLanMenu(StarterGame *game, InputPointer pointer, bool escape, bo
         }
         game->lanStarted = true;
         game->lanMenu = false;
+        return;
+    }
+    if (game->lanDiscovery)
+    {
+        if (escape || LanPressed(LanButton(4), pointer))
+        {
+            StopLanDiscovery(game);
+            ResetMazeLanPermissionCheck();
+            return;
+        }
+        if (!MazeLanAccessDenied()) PollMazeLanDiscovery(game->lanDiscovery);
+        if (MazeLanAccessDenied())
+        {
+            ReturnToLanMenu(game, lanPermissionMessage);
+            return;
+        }
+        MazeLanGame games[MAZE_LAN_GAMES];
+        int count = ListMazeLanGames(game->lanDiscovery, games);
+        for (int i = 0; i < count; ++i)
+            if (LanPressed(LanButton(i), pointer))
+            {
+                strcpy(game->lanAddress, games[i].address);
+                StartLanConnection(game, false, false);
+                break;
+            }
         return;
     }
     if (game->lanJoin)
@@ -575,6 +626,14 @@ static void ReadLanMenu(StarterGame *game, InputPointer pointer, bool escape, bo
         game->lanJoin = true;
         game->lanStatus = NULL;
     }
+    else if (LanPressed(LanButton(3), pointer))
+    {
+        ResetMazeLanPermissionCheck();
+        MazeLanAccessDenied();
+        game->lanDiscovery = OpenMazeLanDiscovery();
+        game->lanStatus = game->lanDiscovery ? NULL : "Could not start the local search.";
+        if (MazeLanAccessDenied()) ReturnToLanMenu(game, lanPermissionMessage);
+    }
 }
 
 static void DrawLanButton(Rectangle rect, const char *label, InputPointer pointer)
@@ -594,7 +653,22 @@ static void DrawLanMenu(const StarterGame *game)
         DrawUiLabel(label, panel.x + 18, LanButton(0).y, 19, panel.width - 36, RAYWHITE);
         DrawUiLabel(MazeLanAddress(game->mazeLan),
                     panel.x + 18, LanButton(1).y, 17, panel.width - 36, GOLD);
+        if (game->lanHost && !game->lanAdvertised)
+            DrawUiLabel("Enter this address manually on the other device.",
+                        panel.x + 18, LanButton(2).y, 14, panel.width - 36, RAYWHITE);
         DrawLanButton(LanButton(4), "Cancel", pointer);
+    }
+    else if (game->lanDiscovery)
+    {
+        MazeLanGame games[MAZE_LAN_GAMES];
+        int count = ListMazeLanGames(game->lanDiscovery, games);
+        for (int i = 0; i < count; ++i)
+            DrawLanButton(LanButton(i), TextFormat("%s   %s", games[i].infinite ? "Infinite" : "Classic",
+                                                  games[i].address), pointer);
+        if (!count)
+            DrawUiLabel("Looking for nearby games...", panel.x + 18, LanButton(0).y,
+                        17, panel.width - 36, RAYWHITE);
+        DrawLanButton(LanButton(4), "Back", pointer);
     }
     else if (game->lanJoin)
     {
@@ -616,9 +690,10 @@ static void DrawLanMenu(const StarterGame *game)
         DrawLanButton(LanButton(0), "Host Classic", pointer);
         DrawLanButton(LanButton(1), "Host Infinite", pointer);
         DrawLanButton(LanButton(2), "Join by IP", pointer);
+        DrawLanButton(LanButton(3), "Find games", pointer);
         DrawLanButton(LanButton(4), "Back", pointer);
         DrawUiLabel(game->lanStatus ? game->lanStatus : "Both devices must be on the same local network.",
-                    panel.x + 18, LanButton(3).y + 5, 14, panel.width - 36, RAYWHITE);
+                    panel.x + 18, LanButton(5).y + 2, 14, panel.width - 36, RAYWHITE);
     }
 }
 
@@ -857,7 +932,8 @@ static bool UpdateStarter(void *state, float deltaTime)
     {
         game->titlePointer = pointer.position;
         PollMazeLan(game->mazeLan);
-        if (MazeLanFailed(game->mazeLan)) ReturnToLanMenu(game, "Partner disconnected.");
+        if (MazeLanAccessDenied()) ReturnToLanMenu(game, lanPermissionMessage);
+        else if (MazeLanFailed(game->mazeLan)) ReturnToLanMenu(game, "Partner disconnected.");
         else if (game->lanHost) UpdateLanHost(game, actions, pointer, deltaTime);
         else UpdateLanGuest(game, actions, pointer);
         if (game->campaignOpen) PrepareCampaignLighting(&game->campaign, &game->campaignSurfaces);
@@ -1365,6 +1441,8 @@ static void ShutdownStarter(void *state)
 {
     StarterGame *game = state;
     CloseMazeLan(game->mazeLan);
+    StopLanDiscovery(game);
+    ResetMazeLanPermissionCheck();
     CloseWorldCampaign(&game->worlds);
     CloseWorldEditor(&game->worldEditor);
     UnloadWorldLevels();
