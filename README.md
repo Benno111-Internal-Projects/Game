@@ -149,6 +149,16 @@ works if both players can reach it. Carrier-grade NAT and restrictive
 networks can prevent direct connections. Internet co-op has no relay or
 automatic port forwarding.
 
+### QR invites
+
+The LAN and Internet host screens show a QR invite when a join address is
+available. For an Internet host, **Set invite address** lets you generate the
+code with a public address, forwarded port, or VPN address. Scan the QR
+with a phone's QR reader and open the link with project 3D installed.
+The link fills in the address on the join screen, and the player taps
+**Connect** to join. The same address is shown on the host screen for
+manual entry.
+
 ### Edit a maze
 
 Choose **Mazes → Edit mazes** and select a Classic level. Drag or swipe to
