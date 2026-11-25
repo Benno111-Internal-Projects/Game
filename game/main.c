@@ -181,10 +181,12 @@ static bool InitStarter(void *state)
         snprintf(shadersDir, sizeof(shadersDir), "%sshaders/", appDir) >= (int)sizeof(shadersDir))
         return false;
 #endif
+    char terrainDir[4096];
+    if (snprintf(terrainDir, sizeof(terrainDir), "%sterrain/", assetsDir) >= (int)sizeof(terrainDir)) return false;
     if (!LoadWorldLevels(TextFormat("%sworlds", assetsDir)) ||
         !LoadCampaignLevels(TextFormat("%slevels", assetsDir)) ||
         !LoadCampaignSurfaces(&game->campaignSurfaces, assetsDir, shadersDir) ||
-        !LoadTerrainLayers(&game->terrainLayers, assetsDir, shadersDir)) return false;
+        !LoadTerrainLayers(&game->terrainLayers, terrainDir, shadersDir)) return false;
     LoadWorldOverrides();
     LoadCampaignMazeOverrides();
     const char *assetPath = game->modelPath ? game->modelPath : TextFormat("%ssample.obj", assetsDir);

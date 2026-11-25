@@ -2,16 +2,22 @@
 
 A first-person 3D platformer built on benno111 engene and raylib.
 
-- `framework/` builds the reusable `render-framework` library. It contains skybox rendering, imported texture cleanup, first-person camera math, and the GLSL shaders.
-- `game/` builds the `benno111-engene` executable. It contains the Dorfplatformer campaign, title screen, sandbox, and scene editor.
+- `game/` contains the campaign, editor, runtime assets, and shaders.
+- The reusable `render-framework` library comes from [Benno111Engene](https://github.com/Benno111-Internal-Projects/Benno111Engene). `framework-revision.txt` pins the version used by this game.
 
-Set `GAME_WINDOW_TITLE` in `game/game.h` to change the window title and in-game header, then rebuild.
+Set `GAME_CODENAME` in `game/game.h` to change the window title and in-game heading, then rebuild.
 
 ## Build and run
 
 Use CMake 3.20+ and a C compiler. CMake uses installed raylib 5.5 when available or fetches the pinned source. A Linux source build needs the raylib/GLFW development dependencies for X11 and OpenGL.
 
+Clone the private framework repo with an account that has read access, then
+check out the pinned revision. Use `-DBENNO111_FRAMEWORK_ROOT=/path/to/Benno111Engene`
+if you already have that revision checked out elsewhere.
+
 ```sh
+gh repo clone Benno111-Internal-Projects/Benno111Engene .deps/Benno111Engene
+git -C .deps/Benno111Engene checkout --detach "$(cat framework-revision.txt)"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ./build/benno111-engene
@@ -201,7 +207,7 @@ can supply their own bounds and ground-height sampler through
 - **Models** use raylib's loaders. OBJ, glTF, and GLB are the intended formats. Keep sidecar files such as OBJ materials and glTF textures next to the model or in the paths the model references.
 - **Textures** use the model's first UV set and diffuse or base-color map. The optional second argument overrides that map across all materials. Use `-` to keep the imported maps. The demo shader uses a single diffuse texture, a material tint, and a directional light.
 - **Skyboxes** accept a horizontal strip of six square faces in OpenGL order `+X, -X, +Y, -Y, +Z, -Z`. With no strip, the app creates a gradient cubemap.
-- **Shaders** live alongside the executable after building. Edit the copied GLSL files and relaunch for quick iteration. Edit the source copies under `framework/shaders/` and rebuild to keep changes in the project. Add new meshes and draw calls inside `BeginMode3D` to extend the scene.
+- **Shaders** live alongside the executable after building. Edit the copied GLSL files and relaunch for quick iteration. Edit the source copies under `game/shaders/` and rebuild to keep changes in the project. Add new meshes and draw calls inside `BeginMode3D` to extend the scene.
 
 ## Framework modules
 
@@ -285,6 +291,12 @@ Put this project at the root of the GitHub repository so GitHub can discover
 `.github/workflows/gamebuild.yml`. The **Game build** workflow runs on pushes,
 pull requests, and manual dispatches. It uploads one artifact per platform.
 
+In **Settings → Secrets and variables → Actions** for the Game repo, add
+`FRAMEWORK_READ_TOKEN` with Contents read access to the private
+`Benno111Engene` repo. All four jobs check out the revision pinned in
+`framework-revision.txt`. Fork pull requests require a trusted maintainer build
+because GitHub withholds repository secrets from fork workflows.
+
 | Platform | Artifact |
 | --- | --- |
 | Windows x64 | Release executable with game assets and shaders |
@@ -296,7 +308,7 @@ For Android local builds, install SDK 35, NDK `28.2.13676358`, CMake
 `3.22.1`, Java 17, and Gradle `8.10.2`, then run
 `gradle -p android assembleDebug`. iOS builds use the SDL2 backend,
 Xcode, and CMake 3.24 or newer. Mobile builds load the OpenGL ES shaders
-from `framework/shaders/es/`.
+from `game/shaders/es/`.
 
 ### Install on iOS with SideStore
 
