@@ -135,6 +135,22 @@ On iOS, allow local network access when prompted. If the host does not appear
 in the list, try **Join by IP**. Guest Wi-Fi isolation and firewalls can block
 connections between devices.
 
+### Two desktop windows
+
+Launch the game twice with `--window left` and `--window right` to place the
+instances on opposite sides of the monitor.
+
+```powershell
+Start-Process .\benno111-engene.exe -ArgumentList '--window', 'left'
+Start-Process .\benno111-engene.exe -ArgumentList '--window', 'right'
+```
+
+On Linux, run `./benno111-engene --window left` and
+`./benno111-engene --window right` in separate terminals. For same-PC co-op,
+host from one window and connect to `127.0.0.1:39273` from the other.
+Keyboard and mouse input go to the focused window, while both sessions
+continue running.
+
 ### Internet co-op
 
 Open **Mazes → Internet co-op**. The host chooses **Host Classic** or
