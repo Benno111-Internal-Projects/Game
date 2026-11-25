@@ -30,7 +30,7 @@ endif()
 
 if(NOT ANDROID)
     set_target_properties(benno111-engene PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
-    set(shader_dir "${PROJECT_SOURCE_DIR}/framework/shaders")
+    set(shader_dir "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         string(APPEND shader_dir "/es")
         # Copy after linking so Xcode has already created the application bundle.

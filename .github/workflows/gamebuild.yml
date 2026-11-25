@@ -27,6 +27,34 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read framework revision
+        id: framework
+        shell: bash
+        env:
+          FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
+        run: |
+          revision="$(tr -d '\r\n' < framework-revision.txt)"
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::framework-revision.txt must contain a full commit SHA."
+            exit 1
+          fi
+          if [[ -z "$FRAMEWORK_READ_TOKEN" ]]; then
+            echo "::error::Set the FRAMEWORK_READ_TOKEN Actions secret to a token with read access to Benno111Engene."
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Download Benno111Engene
+        uses: actions/checkout@v4
+        with:
+          repository: Benno111-Internal-Projects/Benno111Engene
+          ref: ${{ steps.framework.outputs.revision }}
+          token: ${{ secrets.FRAMEWORK_READ_TOKEN }}
+          path: .deps/Benno111Engene
+          persist-credentials: false
 
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
