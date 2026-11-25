@@ -86,8 +86,10 @@ width and height from 17 to 200 cells. The minimap follows the player in
 large mazes.
 
 Wall torches light the dark corridors and burn on contact. Each maze has three
-floors. Walk into the marked elevator on floors 1 and 2 to ride up. On
-floor 3, find the hidden passage to the enclosed boss room. Land on a boss from above
+floors. Walk to the gold elevator to choose any floor. The stairs connect
+adjacent floors in either direction. Press the destination number on
+desktop or use the floor buttons on mobile. The hidden passage to the
+boss room is on floor 3. Land on a boss from above
 to damage it, jump over its attacks, and use the gate once the room is clear.
 Several bosses change movement and attacks as they take damage. The Hollow Crown
 has three phases.
@@ -127,8 +129,8 @@ Connect two devices to the same local network. On one device, open
 On the other device, choose **Find games** and select the host. **Join by IP**
 also accepts the address shown by the host, such as `192.168.1.20:39273`.
 An address without a port uses 39273. Both players can explore, ride the
-elevators, and fight bosses. Either player can advance the run, and lives
-are shared.
+elevators, and fight bosses. Either player can bring both players along on an elevator or stair trip.
+Lives are shared, and co-op requires the same game version on both devices.
 
 The built-in host uses TCP port 39273 for play and UDP port 39273 for discovery.
 On iOS, allow local network access when prompted. If the host does not appear
@@ -185,6 +187,8 @@ maze** switches layouts in levels 5 and 7. The editor sets the first-floor
 layouts. The game generates the two upper floors for each maze. **Save update**
 checks that every
 passage connects to the spawn and exit, then applies the edit locally.
+**Check routes** shows the shortest spawn-to-exit route in blue and
+unreachable passage tiles in red. The preview updates as you edit.
 **Play saved** opens the saved level with unlimited retries and returns to
 the editor when you leave.
 
