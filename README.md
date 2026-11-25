@@ -151,13 +151,15 @@ automatic port forwarding.
 
 ### QR invites
 
-The LAN and Internet host screens show a QR invite when a join address is
-available. For an Internet host, **Set invite address** lets you generate the
-code with a public address, forwarded port, or VPN address. Scan the QR
-with a phone's QR reader and open the link with project 3D installed.
-The link fills in the address on the join screen, and the player taps
-**Connect** to join. The same address is shown on the host screen for
-manual entry.
+The LAN and Internet host screens show a QR code containing the host's IP
+address and port. On Android or iOS, open the matching co-op menu, select
+**Join by IP → Scan QR**, and allow camera access when prompted. On desktop,
+drop a saved QR image onto **Join by IP**. The game connects as soon as it
+reads a valid address.
+
+For Internet hosting, **Set invite address** accepts a reachable public or
+VPN address and a forwarded port. The address is also shown on the host
+screen for manual entry.
 
 ### Edit a maze
 
