@@ -1,5 +1,6 @@
 #include "maze_lan.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,7 +31,7 @@ enum { LAN_MAGIC = 0x33444d01, MAX_PACKET = 8 + sizeof(MazeLanFrame) + sizeof(Ma
 struct MazeLan {
     LanSocket listener, peer;
     bool host, connected, failed, receivedInput, receivedFrame, receivedLayout;
-    char address[16];
+    char address[MAZE_LAN_ADDRESS_CAPACITY];
     double opened, lastReceive;
     int sent, sendSize, readSize;
     unsigned char out[MAX_PACKET], in[MAX_PACKET];
@@ -82,6 +83,34 @@ static void FindAddress(char address[16])
     CloseSocket(probe);
 }
 
+static bool ParseEndpoint(const char *address, struct sockaddr_in *endpoint)
+{
+    if (!address) return false;
+    const char *separator = strchr(address, ':');
+    size_t length = separator ? (size_t)(separator - address) : strlen(address);
+    char ip[16];
+    if (!length || length >= sizeof(ip)) return false;
+    memcpy(ip, address, length);
+    ip[length] = 0;
+    if (inet_pton(AF_INET, ip, &endpoint->sin_addr) != 1) return false;
+
+    unsigned int port = MAZE_LAN_PORT;
+    if (separator)
+    {
+        const char *digits = separator + 1;
+        if (!*digits || strlen(digits) > 5) return false;
+        port = 0;
+        for (; *digits; ++digits)
+        {
+            if (*digits < '0' || *digits > '9') return false;
+            port = port * 10 + (unsigned int)(*digits - '0');
+        }
+        if (port == 0 || port > 65535) return false;
+    }
+    endpoint->sin_port = htons((uint16_t)port);
+    return true;
+}
+
 MazeLan *OpenMazeLan(bool host, const char *address)
 {
     MazeLan *lan = calloc(1, sizeof(*lan));
@@ -111,12 +140,16 @@ MazeLan *OpenMazeLan(bool host, const char *address)
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #endif
         if (bind(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 || listen(fd, 1) != 0) goto failed;
-        FindAddress(lan->address);
+        char ip[16];
+        FindAddress(ip);
+        snprintf(lan->address, sizeof(lan->address), "%s:%d", ip, MAZE_LAN_PORT);
     }
     else
     {
-        if (inet_pton(AF_INET, address, &endpoint.sin_addr) != 1) goto failed;
-        strcpy(lan->address, address);
+        if (!ParseEndpoint(address, &endpoint)) goto failed;
+        char ip[16];
+        if (!inet_ntop(AF_INET, &endpoint.sin_addr, ip, sizeof(ip))) goto failed;
+        snprintf(lan->address, sizeof(lan->address), "%s:%u", ip, (unsigned int)ntohs(endpoint.sin_port));
         if (connect(fd, (struct sockaddr *)&endpoint, sizeof(endpoint)) != 0 && !WouldBlock()) goto failed;
     }
     return lan;

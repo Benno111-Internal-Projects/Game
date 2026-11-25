@@ -116,10 +116,11 @@ Choose **Sandbox** to play the editable scene.
 Connect two devices to the same local network. On one device, open
 **Mazes → LAN co-op** and choose **Host Classic** or **Host Infinite**.
 On the other device, choose **Join by IP** and enter the IPv4 address
-shown by the host. Both players can explore, ride the elevators, and fight
+and port shown by the host, such as `192.168.1.20:39273`. An address without
+a port uses 39273. Both players can explore, ride the elevators, and fight
 bosses. Either player can advance the run, and lives are shared.
 
-The session uses TCP port 39273. Allow local network access on iOS and
+The built-in host listens on TCP port 39273. Allow local network access on iOS and
 allow the game through the host device's firewall if prompted.
 
 ### Edit a maze

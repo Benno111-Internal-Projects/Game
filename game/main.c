@@ -142,7 +142,7 @@ typedef struct StarterGame {
     uint64_t lanSentLayout;
     double lanSendAt;
     bool lanMenu, lanJoin, lanHost, lanInfinite, lanStarted;
-    char lanAddress[16];
+    char lanAddress[MAZE_LAN_ADDRESS_CAPACITY];
     const char *lanStatus;
     DebugTools debugTools;
     WorldCampaign worlds;
@@ -461,11 +461,19 @@ static Rectangle LanButton(int index)
     return (Rectangle){ panel.x + 18, panel.y + (index + 2) * unit, panel.width - 36, unit - 4 };
 }
 
+static const char lanKeys[] = "123456789.0:";
+
 static Rectangle LanKey(int index)
 {
-    Rectangle row = LanButton(1 + index / 3);
-    float width = row.width / 3;
-    return (Rectangle){ row.x + index % 3 * width, row.y, width - 4, row.height };
+    Rectangle row = LanButton(1 + index / 4);
+    float width = row.width / 4;
+    return (Rectangle){ row.x + index % 4 * width, row.y, width - 4, row.height };
+}
+
+static Rectangle LanDelete(void)
+{
+    Rectangle row = LanButton(0);
+    return (Rectangle){ row.x + row.width - 68, row.y, 68, row.height };
 }
 
 static bool LanPressed(Rectangle bounds, InputPointer pointer)
@@ -482,7 +490,7 @@ static void StartLanConnection(StarterGame *game, bool host, bool infinite)
     game->lanSentLayout = UINT64_MAX;
     game->lanSendAt = 0;
     game->lanInput = (MazeLanInput){0};
-    game->lanStatus = game->mazeLan ? NULL : host ? "Could not listen on port 39273." : "Enter a valid IPv4 address.";
+    game->lanStatus = game->mazeLan ? NULL : host ? "Could not listen on port 39273." : "Check the IPv4 address and port.";
     if (game->mazeLan && !host)
     {
         memset(&game->campaign, 0, sizeof(game->campaign));
@@ -542,27 +550,15 @@ static void ReadLanMenu(StarterGame *game, InputPointer pointer, bool escape, bo
     }
     if (game->lanJoin)
     {
-        static const char keys[] = "123456789.0<";
         size_t length = strlen(game->lanAddress);
         int key;
         while ((key = GetCharPressed()) != 0)
-            if (((key >= '0' && key <= '9') || key == '.') && length < 15)
-            {
+            if (key < 128 && strchr(lanKeys, key) && length < sizeof(game->lanAddress) - 1)
                 game->lanAddress[length++] = (char)key;
-                game->lanAddress[length] = '\0';
-            }
-        bool erase = IsKeyPressed(KEY_BACKSPACE);
-        for (int i = 0; i < 12; ++i)
-            if (LanPressed(LanKey(i), pointer))
-            {
-                if (i == 11) erase = true;
-                else if (length < 15)
-                {
-                    game->lanAddress[length++] = keys[i];
-                    game->lanAddress[length] = '\0';
-                }
-            }
-        if (erase && length) game->lanAddress[--length] = '\0';
+        for (int i = 0; lanKeys[i] && length < sizeof(game->lanAddress) - 1; ++i)
+            if (LanPressed(LanKey(i), pointer)) game->lanAddress[length++] = lanKeys[i];
+        if (length && (IsKeyPressed(KEY_BACKSPACE) || LanPressed(LanDelete(), pointer))) --length;
+        game->lanAddress[length] = 0;
         if (enter || LanPressed(LanButton(5), pointer)) StartLanConnection(game, false, false);
         if (escape || LanPressed(LanButton(6), pointer)) { game->lanJoin = false; game->lanStatus = NULL; }
         return;
@@ -596,16 +592,20 @@ static void DrawLanMenu(const StarterGame *game)
     {
         const char *label = game->lanHost ? "Waiting for a partner" : "Connecting to host";
         DrawUiLabel(label, panel.x + 18, LanButton(0).y, 19, panel.width - 36, RAYWHITE);
-        DrawUiLabel(TextFormat("%s:%d", MazeLanAddress(game->mazeLan), MAZE_LAN_PORT),
+        DrawUiLabel(MazeLanAddress(game->mazeLan),
                     panel.x + 18, LanButton(1).y, 17, panel.width - 36, GOLD);
         DrawLanButton(LanButton(4), "Cancel", pointer);
     }
     else if (game->lanJoin)
     {
-        DrawUiLabel(game->lanAddress[0] ? game->lanAddress : "Host IPv4 address",
-                    panel.x + 18, LanButton(0).y - 8, 17, panel.width - 36, GOLD);
-        const char *keys[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "Delete" };
-        for (int i = 0; i < 12; ++i) DrawLanButton(LanKey(i), keys[i], pointer);
+        DrawUiLabel(game->lanAddress[0] ? game->lanAddress : "IPv4 address or IP:port",
+                    panel.x + 18, LanButton(0).y - 8, 17, panel.width - 112, GOLD);
+        DrawLanButton(LanDelete(), "Delete", pointer);
+        for (int i = 0; lanKeys[i]; ++i)
+        {
+            const char label[] = { lanKeys[i], 0 };
+            DrawLanButton(LanKey(i), label, pointer);
+        }
         DrawLanButton(LanButton(5), "Connect", pointer);
         DrawLanButton(LanButton(6), "Back", pointer);
         if (game->lanStatus)

@@ -4,7 +4,7 @@
 #include "campaign.h"
 #include <stdint.h>
 
-enum { MAZE_LAN_PORT = 39273 };
+enum { MAZE_LAN_PORT = 39273, MAZE_LAN_ADDRESS_CAPACITY = 22 };
 typedef struct MazeLan MazeLan;
 // Wire payloads use 32-bit integers and floats on the supported little-endian targets.
 typedef struct MazeLanInput {
