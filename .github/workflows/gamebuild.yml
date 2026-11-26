@@ -187,7 +187,16 @@ jobs:
           grep -Fx 'lib/arm64-v8a/libbenno111_engene.so' apk-files.txt
           grep -Fx 'assets/model.vert' apk-files.txt
           grep -Fx 'assets/sample.obj' apk-files.txt
-          grep -Fx 'assets/starter-ambient.ogg' apk-files.txt
+          # The soundtrack was renamed; validate the assets used by the current game.
+          soundtrack=starter-ambient.ogg
+          if [[ -f game/assets/garden-rain.ogg ]]; then soundtrack=garden-rain.ogg; fi
+          for asset in "$soundtrack" maze-servers.txt water_surface.vert water_surface.frag water_underwater.frag; do
+            if [[ "$asset" != "$soundtrack" && ! -f "game/assets/$asset" && ! -f "game/shaders/es/$asset" ]]; then continue; fi
+            if ! grep -Fx "assets/$asset" apk-files.txt; then
+              echo "::error::APK is missing assets/$asset"
+              exit 1
+            fi
+          done
           for level in 01 02 03 04 05 06 07; do
             grep -Fx "assets/levels/$level.level" apk-files.txt
             grep -Fx "assets/worlds/$level.world" apk-files.txt
