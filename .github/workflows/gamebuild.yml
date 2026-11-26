@@ -29,8 +29,8 @@ jobs:
             runner: macos-15
     runs-on: ${{ matrix.runner }}
     env:
-      PROJECT3D_ACCOUNT_URL: ${{ vars.PROJECT3D_ACCOUNT_URL }}
-      PROJECT3D_ACCOUNT_PUBLIC_KEY: ${{ vars.PROJECT3D_ACCOUNT_PUBLIC_KEY }}
+      PROJECT3D_ACCOUNT_URL: ${{ vars.PROJECT3D_ACCOUNT_URL || 'http://critique-unsmooth.tun.ply.gg:49642/' }}
+      PROJECT3D_ACCOUNT_PUBLIC_KEY: ${{ vars.PROJECT3D_ACCOUNT_PUBLIC_KEY || '79716e0f177c7179823014e99af314e3a8f563267b0638800bb427d217d9996b' }}
 
     defaults:
       run:
