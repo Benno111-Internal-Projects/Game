@@ -28,6 +28,9 @@ jobs:
           - platform: ios
             runner: macos-15
     runs-on: ${{ matrix.runner }}
+    env:
+      PROJECT3D_ACCOUNT_URL: ${{ vars.PROJECT3D_ACCOUNT_URL }}
+      PROJECT3D_ACCOUNT_PUBLIC_KEY: ${{ vars.PROJECT3D_ACCOUNT_PUBLIC_KEY }}
 
     defaults:
       run:
