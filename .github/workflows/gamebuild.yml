@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       game_ref:
-        description: game-main branch, tag, or commit with standalone build files
+        description: game-main branch, tag, or full 40-character commit SHA
         default: main
 
 permissions:
@@ -37,6 +37,17 @@ jobs:
         working-directory: .deps/game-main
 
     steps:
+      - name: Validate game revision
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GAME_REF: ${{ inputs.game_ref || 'main' }}
+        run: |
+          if [[ "$GAME_REF" =~ ^[0-9a-fA-F]{4,39}$ ]]; then
+            echo "::error::Use the full 40-character commit SHA for game_ref. For a hex-only branch or tag, use refs/heads/ or refs/tags/."
+            exit 1
+          fi
+
       - name: Download game-main
         uses: actions/checkout@v4
         with:
