@@ -7,7 +7,7 @@ on:
     inputs:
       game_ref:
         description: game-main branch, tag, or full 40-character commit SHA
-        default: a680f88092cf719863c56f94a19b0d3911c55c26
+        default: d662ff1ea9e2a5fa4bdb1c601de32dbce629c747
 
 permissions:
   contents: read
@@ -41,7 +41,7 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          GAME_REF: ${{ inputs.game_ref || 'a680f88092cf719863c56f94a19b0d3911c55c26' }}
+          GAME_REF: ${{ inputs.game_ref || 'd662ff1ea9e2a5fa4bdb1c601de32dbce629c747' }}
         run: |
           if [[ "$GAME_REF" =~ ^[0-9a-fA-F]{4,39}$ ]]; then
             echo "::error::Use the full 40-character commit SHA for game_ref. For a hex-only branch or tag, use refs/heads/ or refs/tags/."
@@ -52,7 +52,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Benno111-Internal-Projects/game-main
-          ref: ${{ inputs.game_ref || 'a680f88092cf719863c56f94a19b0d3911c55c26' }}
+          ref: ${{ inputs.game_ref || 'd662ff1ea9e2a5fa4bdb1c601de32dbce629c747' }}
           token: ${{ secrets.GAME_READ_TOKEN || secrets.YY }}
           path: .deps/game-main
           persist-credentials: false
